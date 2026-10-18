@@ -34,18 +34,28 @@ def run_async(coro):
 
 
 def get_backend(driver: Optional[str] = None):
-    """Prioritizes Accessibility over WebRTC as PRIMARY;
-    falls back to ADB over WebRTC bridge (127.0.0.1:55555) as ALTERNATIVE;
-    or direct ADB only when explicitly requested or standalone."""
-    from android_control.daemon import SOCKET_PATH
+    """Prioritizes the control method decided by the Android control app in response to request;
+    falls back to standalone if no active session."""
+    from android_control.daemon import SOCKET_PATH, STATE_PATH
 
     if driver == "a11y":
         return "daemon"
     if driver == "adb":
         return "adb"
 
-    # Primary: Active WebRTC Accessibility daemon session
+    # Active session: check mode chosen by Android control app!
     if SOCKET_PATH.exists():
+        if STATE_PATH.exists():
+            try:
+                state = json.loads(STATE_PATH.read_text())
+                chosen = state.get("device_info", {}).get("mode", state.get("mode"))
+                if chosen == "adb":
+                    adb_webrtc = AdbDriver(serial="127.0.0.1:55555")
+                    if adb_webrtc.is_connected():
+                        return "adb"
+                return "daemon"
+            except Exception:
+                pass
         return "daemon"
 
     # Alternative: Active WebRTC ADB bridge tunnel
@@ -179,11 +189,22 @@ def status():
     """Print connection status, active driver, and device information."""
     from android_control.daemon import SOCKET_PATH
 
-    # 1. Active Accessibility WebRTC daemon session
+    # 1. Active WebRTC daemon session
     if SOCKET_PATH.exists():
         try:
             res = run_async(client_rpc("session.status"))
-            res["driver"] = "accessibility"
+            from android_control.daemon import STATE_PATH
+
+            chosen = "accessibility"
+            if STATE_PATH.exists():
+                try:
+                    st = json.loads(STATE_PATH.read_text())
+                    chosen = st.get("device_info", {}).get("mode", st.get("mode", "accessibility"))
+                except Exception:
+                    pass
+
+            res["driver"] = chosen
+            res["decided_by"] = "control_app"
             res["transport"] = "webrtc"
             adb_bridge = AdbDriver(serial="127.0.0.1:55555")
             res["adb_bridge_ready"] = adb_bridge.is_connected()

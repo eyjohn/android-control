@@ -41,6 +41,7 @@ class SessionAnswer(BaseModel):
     sdp: str
     approved: bool = True
     device_name: str = "Pixel 9a"
+    mode: str = "accessibility"
     timestamp_ms: int = 0
 
     def to_payload(self) -> str:

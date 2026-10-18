@@ -77,6 +77,7 @@ class ControlDaemon:
             "device_name": answer.device_name,
             "session_id": self.session_id,
             "approved_at": answer.timestamp_ms,
+            "mode": getattr(answer, "mode", "accessibility"),
         }
 
         # 4. Connect WebRTC
@@ -114,6 +115,7 @@ class ControlDaemon:
             "ttl_seconds": self.ttl_seconds,
             "reason": self.reason,
             "device_info": self.device_info,
+            "mode": self.device_info.get("mode", "accessibility"),
             "socket": str(SOCKET_PATH),
         }
         STATE_PATH.write_text(json.dumps(state, indent=2))

@@ -16,6 +16,7 @@ data class SessionPayload(
     val ttlSeconds: Int = 600,
     val approved: Boolean = true,
     val deviceName: String = "Pixel 9a",
+    val mode: String = "accessibility",
     val timestampMs: Long = System.currentTimeMillis()
 ) {
     fun toJson(): String {
@@ -27,6 +28,7 @@ data class SessionPayload(
             put("ttl_seconds", ttlSeconds)
             put("approved", approved)
             put("device_name", deviceName)
+            put("mode", mode)
             put("timestamp_ms", timestampMs)
         }.toString()
     }
@@ -78,6 +80,7 @@ data class SessionPayload(
                 ttlSeconds = obj.optInt("ttl_seconds", 600),
                 approved = obj.optBoolean("approved", true),
                 deviceName = obj.optString("device_name", "Pixel 9a"),
+                mode = obj.optString("mode", "accessibility"),
                 timestampMs = obj.optLong("timestamp_ms", System.currentTimeMillis())
             )
         }

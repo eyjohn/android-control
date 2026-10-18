@@ -50,6 +50,7 @@ class SessionPayloadTest {
         assertEquals(payload.reason, decoded.reason)
         assertEquals(payload.ttlSeconds, decoded.ttlSeconds)
         assertEquals(payload.approved, decoded.approved)
+        assertEquals(payload.mode, decoded.mode)
     }
 }
 

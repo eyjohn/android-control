@@ -152,7 +152,8 @@ class MainActivity : ComponentActivity() {
                         reason = offer.reason,
                         ttlSeconds = offer.ttlSeconds,
                         approved = true,
-                        deviceName = "Pixel 9a"
+                        deviceName = "Pixel 9a",
+                        mode = if (controlMode == ControlMode.ACCESSIBILITY) "accessibility" else "adb"
                     )
                     val b64 = answer.toBase64Gzip()
                     generatedAnswer = b64
