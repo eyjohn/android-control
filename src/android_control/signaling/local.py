@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import subprocess
 import time
+import urllib.parse
 from pathlib import Path
 from typing import Optional
 
@@ -16,13 +18,102 @@ class LocalFileSignaling(SignalingProvider):
         self.base_dir = base_dir
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
+    def _clean_device_answer(self) -> None:
+        try:
+            subprocess.run(
+                [
+                    "adb",
+                    "shell",
+                    "run-as",
+                    "com.evdev.androidcontrol",
+                    "rm",
+                    "-f",
+                    "files/answer.webrtc",
+                ],
+                capture_output=True,
+                timeout=2.0,
+            )
+            subprocess.run(
+                [
+                    "adb",
+                    "shell",
+                    "rm",
+                    "-f",
+                    "/sdcard/Android/data/com.evdev.androidcontrol/files/answer.webrtc",
+                ],
+                capture_output=True,
+                timeout=2.0,
+            )
+        except Exception:
+            pass
+
+    def _dispatch_adb_intent(self, uri: str) -> None:
+        try:
+            subprocess.run(
+                [
+                    "adb",
+                    "shell",
+                    "am",
+                    "start",
+                    "-a",
+                    "android.intent.action.VIEW",
+                    "-d",
+                    uri,
+                    "com.evdev.androidcontrol",
+                ],
+                capture_output=True,
+                timeout=5.0,
+            )
+        except Exception:
+            pass
+
+    def _fetch_device_answer(self) -> Optional[str]:
+        try:
+            cmd = [
+                "adb",
+                "shell",
+                "run-as",
+                "com.evdev.androidcontrol",
+                "cat",
+                "files/answer.webrtc",
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=2.0)
+            if res.returncode == 0 and res.stdout.strip():
+                content = res.stdout.strip()
+                self._clean_device_answer()
+                return content
+        except Exception:
+            pass
+
+        try:
+            cmd = [
+                "adb",
+                "shell",
+                "cat",
+                "/sdcard/Android/data/com.evdev.androidcontrol/files/answer.webrtc",
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=2.0)
+            if res.returncode == 0 and res.stdout.strip():
+                content = res.stdout.strip()
+                self._clean_device_answer()
+                return content
+        except Exception:
+            pass
+        return None
+
     async def publish_offer(self, offer: SessionOffer) -> None:
         offer_file = self.base_dir / f"{offer.session_id}.offer.json"
         offer_file.write_text(offer.model_dump_json(indent=2))
 
         # Also write session.webrtc for out-of-band / webrtc-bridge pairing
         webrtc_file = Path("_scratch/session.webrtc")
-        webrtc_file.write_text(offer.to_payload())
+        payload = offer.to_payload()
+        webrtc_file.write_text(payload)
+
+        # Clear any stale answers on device and dispatch intent
+        self._clean_device_answer()
+        uri = f"android-control://approve?data={urllib.parse.quote(payload)}"
+        self._dispatch_adb_intent(uri)
 
     async def wait_for_answer(
         self, session_id: str, timeout_seconds: float = 120.0
@@ -44,7 +135,17 @@ class LocalFileSignaling(SignalingProvider):
                     return ans
                 except Exception:
                     pass
-            await asyncio.sleep(0.2)
+
+            dev_ans = self._fetch_device_answer()
+            if dev_ans:
+                try:
+                    ans = SessionAnswer.from_payload(dev_ans)
+                    webrtc_ans.write_text(dev_ans)
+                    return ans
+                except Exception:
+                    pass
+
+            await asyncio.sleep(0.3)
         return None
 
     async def close_session(self, session_id: str) -> None:
@@ -66,6 +167,9 @@ class LocalFileSignaling(SignalingProvider):
         reneg_file = self.base_dir / f"{session_id}.reneg_offer.json"
         reneg_file.write_text(json.dumps({"session_id": session_id, "sdp": offer_sdp}))
         Path("_scratch/session.webrtc").write_text(offer_sdp)
+        self._clean_device_answer()
+        uri = f"android-control://renegotiate?data={urllib.parse.quote(offer_sdp)}"
+        self._dispatch_adb_intent(uri)
 
     async def wait_for_renegotiation_answer(
         self, session_id: str, timeout_seconds: float = 30.0
@@ -89,5 +193,19 @@ class LocalFileSignaling(SignalingProvider):
                     return ans.sdp
                 except Exception:
                     pass
-            await asyncio.sleep(0.2)
+
+            dev_ans = self._fetch_device_answer()
+            if dev_ans:
+                try:
+                    raw = dev_ans.strip()
+                    if "v=0" in raw:
+                        webrtc_ans.write_text(raw)
+                        return raw
+                    ans = SessionAnswer.from_payload(raw)
+                    webrtc_ans.write_text(dev_ans)
+                    return ans.sdp
+                except Exception:
+                    pass
+
+            await asyncio.sleep(0.3)
         return None

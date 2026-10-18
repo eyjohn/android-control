@@ -40,6 +40,7 @@ class ControlDaemon:
         self.start_time: float = 0
         self.device_info: Dict[str, Any] = {}
         self._running = False
+        self._stop_event: asyncio.Event = asyncio.Event()
 
     def _resolve_signaling(self) -> SignalingProvider:
         if self.provider_name == "firebase":
@@ -212,8 +213,13 @@ class ControlDaemon:
         finally:
             writer.close()
 
+    async def wait_until_stopped(self) -> None:
+        """Blocks until session is stopped or terminated."""
+        await self._stop_event.wait()
+
     async def stop(self) -> None:
         self._running = False
+        self._stop_event.set()
         try:
             subprocess.run(["adb", "disconnect", "127.0.0.1:55555"], capture_output=True)
             await self.adb_bridge.stop()

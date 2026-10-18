@@ -164,6 +164,10 @@ class MainActivity : ComponentActivity() {
                         val file = java.io.File(getExternalFilesDir(null), "answer.webrtc")
                         file.writeText(b64)
                     } catch (_: Exception) {}
+                    try {
+                        val fileInternal = java.io.File(filesDir, "answer.webrtc")
+                        fileInternal.writeText(b64)
+                    } catch (_: Exception) {}
 
                     val bIntent = Intent("com.evdev.androidcontrol.ANSWER").apply {
                         putExtra("answer", b64)

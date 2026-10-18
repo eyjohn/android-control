@@ -177,8 +177,17 @@ def request(
 
     try:
         run_async(daemon.start(wait_timeout=float(wait)))
+        chosen_mode = daemon.device_info.get("mode", "accessibility")
         rprint("[bold green]✔ Approved & Connected![/] WebRTC DataChannel is ready.")
         rprint(f"Device: {daemon.device_info.get('device_name', 'Pixel 9a')}")
+        rprint(f"Control Method (chosen by phone): [bold cyan]{chosen_mode}[/]")
+        rprint(
+            "[dim]Session active. Listening for commands via IPC. Press Ctrl+C to terminate.[/dim]"
+        )
+        run_async(daemon.wait_until_stopped())
+    except KeyboardInterrupt:
+        rprint("\n[yellow]Session stopped by user.[/yellow]")
+        run_async(daemon.stop())
     except Exception as e:
         rprint(f"[bold red]✘ Connection failed:[/] {e}")
         sys.exit(1)
