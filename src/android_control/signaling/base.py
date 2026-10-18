@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import abc
+import base64
+import gzip
+import json
 from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
@@ -16,6 +19,22 @@ class SessionOffer(BaseModel):
     timestamp_ms: int = 0
     extra: Dict[str, Any] = Field(default_factory=dict)
 
+    def to_payload(self) -> str:
+        data = self.model_dump()
+        raw = json.dumps(data).encode("utf-8")
+        compressed = gzip.compress(raw)
+        return base64.b64encode(compressed).decode("ascii")
+
+    @classmethod
+    def from_payload(cls, payload: str) -> SessionOffer:
+        clean = payload.strip().removeprefix("<webrtc>").removesuffix("</webrtc>").strip()
+        if clean.startswith("{"):
+            data = json.loads(clean)
+        else:
+            raw = gzip.decompress(base64.b64decode(clean))
+            data = json.loads(raw.decode("utf-8"))
+        return cls.model_validate(data)
+
 
 class SessionAnswer(BaseModel):
     session_id: str
@@ -23,6 +42,22 @@ class SessionAnswer(BaseModel):
     approved: bool = True
     device_name: str = "Pixel 9a"
     timestamp_ms: int = 0
+
+    def to_payload(self) -> str:
+        data = self.model_dump()
+        raw = json.dumps(data).encode("utf-8")
+        compressed = gzip.compress(raw)
+        return base64.b64encode(compressed).decode("ascii")
+
+    @classmethod
+    def from_payload(cls, payload: str) -> SessionAnswer:
+        clean = payload.strip().removeprefix("<webrtc>").removesuffix("</webrtc>").strip()
+        if clean.startswith("{"):
+            data = json.loads(clean)
+        else:
+            raw = gzip.decompress(base64.b64decode(clean))
+            data = json.loads(raw.decode("utf-8"))
+        return cls.model_validate(data)
 
 
 class SignalingProvider(abc.ABC):

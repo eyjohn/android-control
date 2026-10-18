@@ -34,8 +34,9 @@ def run_async(coro):
 
 
 def get_backend(driver: Optional[str] = None):
-    """Prioritizes ADB (Wi-Fi/USB) when available for deeper access,
-    falls back to Accessibility daemon."""
+    """Prioritizes Accessibility over WebRTC as PRIMARY;
+    falls back to ADB over WebRTC bridge (127.0.0.1:55555) as ALTERNATIVE;
+    or direct ADB only when explicitly requested or standalone."""
     from android_control.daemon import SOCKET_PATH
 
     if driver == "a11y":
@@ -43,11 +44,20 @@ def get_backend(driver: Optional[str] = None):
     if driver == "adb":
         return "adb"
 
+    # Primary: Active WebRTC Accessibility daemon session
+    if SOCKET_PATH.exists():
+        return "daemon"
+
+    # Alternative: Active WebRTC ADB bridge tunnel
+    adb_webrtc = AdbDriver(serial="127.0.0.1:55555")
+    if adb_webrtc.is_connected():
+        return "adb"
+
+    # Direct fallback if neither WebRTC channel is active
     adb = AdbDriver()
     if adb.is_connected():
         return "adb"
-    if SOCKET_PATH.exists():
-        return "daemon"
+
     return "none"
 
 
@@ -78,6 +88,54 @@ def wifi(
 
 
 @app.command()
+def offer(
+    out: Path = typer.Option(
+        Path("_scratch/session.webrtc"), "--out", "-o", help="Target session offer file"
+    ),
+    reason: str = typer.Option(
+        "AI Agent Remote Control", "--reason", "-r", help="Reason for session"
+    ),
+    ttl: int = typer.Option(600, "--ttl", help="Session TTL in seconds"),
+):
+    """Generate a standalone WebRTC offer payload for out-of-band pairing."""
+    import time
+    import uuid
+
+    from android_control.rtc import WebRtcHost
+    from android_control.signaling.base import SessionOffer
+
+    host = WebRtcHost()
+    offer_sdp = run_async(host.create_offer())
+    sess_id = f"sess-{uuid.uuid4().hex[:8]}"
+    sess_offer = SessionOffer(
+        session_id=sess_id,
+        sdp=offer_sdp,
+        reason=reason,
+        ttl_seconds=ttl,
+        timestamp_ms=int(time.time() * 1000),
+    )
+    payload = sess_offer.to_payload()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(payload)
+    rprint(f"[bold green]✔ Generated session offer:[/] {out}")
+    rprint(f"[bold cyan]Payload:[/] {payload[:60]}... ({len(payload)} bytes)")
+    rprint(f"[bold cyan]Deep link:[/] android-control://approve?data={payload}")
+
+
+@app.command()
+def answer(
+    payload: str = typer.Argument(..., help="Answer payload copied from phone app"),
+    out: Path = typer.Option(
+        Path("_scratch/answer.webrtc"), "--out", "-o", help="Target answer file"
+    ),
+):
+    """Save answer payload copied from phone app to complete out-of-band WebRTC handshake."""
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(payload.strip())
+    rprint(f"[bold green]✔ Saved answer payload to {out}[/]")
+
+
+@app.command()
 def request(
     reason: str = typer.Option(
         "AI Agent Control", "--reason", "-r", help="Reason for requesting phone control"
@@ -104,6 +162,7 @@ def request(
         f"TTL: {ttl_seconds}s)..."
     )
     rprint(f"[bold cyan]==>[/] Reason: [italic]{reason}[/]")
+    rprint("[bold cyan]==>[/] Offer saved to [green]_scratch/session.webrtc[/] for manual pairing.")
     rprint(f"[bold cyan]==>[/] Waiting up to {wait}s for approval...")
 
     try:
@@ -118,20 +177,59 @@ def request(
 @app.command()
 def status():
     """Print connection status, active driver, and device information."""
+    from android_control.daemon import SOCKET_PATH
+
+    # 1. Primary: Active Accessibility WebRTC daemon session
+    if SOCKET_PATH.exists():
+        try:
+            res = run_async(client_rpc("session.status"))
+            res["driver"] = "accessibility"
+            res["priority"] = "primary"
+            res["transport"] = "webrtc"
+            adb_bridge = AdbDriver(serial="127.0.0.1:55555")
+            res["adb_alternative_ready"] = adb_bridge.is_connected()
+            rprint(json.dumps(res, indent=2))
+            return
+        except Exception:
+            pass
+
+    # 2. Alternative: Active WebRTC ADB bridge
+    adb_webrtc = AdbDriver(serial="127.0.0.1:55555")
+    if adb_webrtc.is_connected():
+        pkg = adb_webrtc.get_foreground_package()
+        rprint(
+            json.dumps(
+                {
+                    "driver": "adb_webrtc",
+                    "priority": "alternative",
+                    "transport": "webrtc_bridge",
+                    "target": "127.0.0.1:55555",
+                    "connected": True,
+                    "foreground_package": pkg,
+                    "capabilities": [
+                        "full_shell",
+                        "screencap",
+                        "uiautomator",
+                        "input_events",
+                        "pm_am",
+                    ],
+                },
+                indent=2,
+            )
+        )
+        return
+
+    # 3. Direct ADB (USB / Local Wi-Fi) fallback
     adb = AdbDriver()
     if adb.is_connected():
         pkg = adb.get_foreground_package()
         serial = adb.get_active_serial() or "unknown"
-        if serial.startswith("127.0.0.1:55555"):
-            mode = "webrtc_adb"
-        elif ":" in serial:
-            mode = "wifi"
-        else:
-            mode = "usb"
+        mode = "wifi" if ":" in serial else "usb"
         rprint(
             json.dumps(
                 {
-                    "driver": "adb",
+                    "driver": "adb_direct",
+                    "priority": "standalone_fallback",
                     "transport": mode,
                     "target": serial,
                     "connected": True,
@@ -148,18 +246,6 @@ def status():
             )
         )
         return
-
-    from android_control.daemon import SOCKET_PATH
-
-    if SOCKET_PATH.exists():
-        try:
-            res = run_async(client_rpc("session.status"))
-            res["driver"] = "accessibility"
-            res["transport"] = "webrtc"
-            rprint(json.dumps(res, indent=2))
-            return
-        except Exception:
-            pass
 
     rprint(
         "[bold red]Offline:[/] No connected ADB device and no active Accessibility WebRTC session."

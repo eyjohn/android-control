@@ -43,3 +43,33 @@ async def test_local_file_signaling(tmp_path: Path):
     await provider.close_session(session_id)
     assert not (tmp_path / f"{session_id}.offer.json").exists()
     assert not (tmp_path / f"{session_id}.answer.json").exists()
+
+
+def test_payload_compression_roundtrip():
+    offer = SessionOffer(
+        session_id="sess-roundtrip-456",
+        sdp="v=0\r\no=- 999 2 IN IP4 127.0.0.1\r\ns=-\r\n",
+        reason="Compression Test",
+        ttl_seconds=600,
+    )
+    payload = offer.to_payload()
+    assert isinstance(payload, str)
+    assert len(payload) > 10
+
+    decoded = SessionOffer.from_payload(payload)
+    assert decoded.session_id == offer.session_id
+    assert decoded.sdp == offer.sdp
+    assert decoded.reason == offer.reason
+    assert decoded.ttl_seconds == offer.ttl_seconds
+
+    answer = SessionAnswer(
+        session_id="sess-ans-789",
+        sdp="v=0\r\no=- 888 2 IN IP4 127.0.0.1\r\ns=-\r\n",
+        approved=True,
+        device_name="Pixel 9a Test",
+    )
+    ans_payload = answer.to_payload()
+    decoded_ans = SessionAnswer.from_payload(ans_payload)
+    assert decoded_ans.session_id == answer.session_id
+    assert decoded_ans.sdp == answer.sdp
+    assert decoded_ans.approved is True

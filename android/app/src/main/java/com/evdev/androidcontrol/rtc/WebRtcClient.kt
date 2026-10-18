@@ -15,6 +15,8 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.withContext
 
 class WebRtcClient(
     private val context: Context,
@@ -29,6 +31,9 @@ class WebRtcClient(
 
     private var adbSocket: Socket? = null
     private var adbForwardJob: Job? = null
+
+    val bytesReceived = AtomicLong(0)
+    val bytesTransferred = AtomicLong(0)
 
     init {
         val options = PeerConnectionFactory.InitializationOptions.builder(context)
@@ -118,8 +123,18 @@ class WebRtcClient(
             answerDesc
         )
         setLocalDeferred.await()
+        onStateChange("Gathering candidates...")
 
-        return answerDesc.description
+        // Wait for ICE gathering to complete (or up to 3000ms)
+        val startTime = System.currentTimeMillis()
+        while (peerConnection?.iceGatheringState() != PeerConnection.IceGatheringState.COMPLETE) {
+            if (System.currentTimeMillis() - startTime > 3000) break
+            kotlinx.coroutines.delay(100)
+        }
+
+        val finalSdp = peerConnection?.localDescription?.description ?: answerDesc.description
+        onStateChange("Ready (waiting for peer)")
+        return finalSdp
     }
 
     private fun setupControlDataChannel(channel: DataChannel) {
@@ -187,6 +202,7 @@ class WebRtcClient(
                 if (buffer == null) return
                 val bytes = ByteArray(buffer.data.remaining())
                 buffer.data.get(bytes)
+                bytesReceived.addAndGet(bytes.size.toLong())
                 scope.launch(Dispatchers.IO) {
                     try {
                         val sock = getOrCreateAdbSocket()
@@ -216,6 +232,7 @@ class WebRtcClient(
                 try {
                     val read = sock.getInputStream().read(buf)
                     if (read > 0) {
+                        bytesTransferred.addAndGet(read.toLong())
                         val chunk = buf.copyOf(read)
                         val sendBuf = DataChannel.Buffer(ByteBuffer.wrap(chunk), true)
                         channel.send(sendBuf)
@@ -268,5 +285,19 @@ class WebRtcClient(
         peerConnection?.close()
         peerConnection?.dispose()
         peerConnection = null
+    }
+
+    companion object {
+        suspend fun checkAdbPort(host: String = "127.0.0.1", port: Int = 5555, timeoutMs: Int = 1500): Boolean =
+            withContext(Dispatchers.IO) {
+                try {
+                    Socket().use { socket ->
+                        socket.connect(InetSocketAddress(host, port), timeoutMs)
+                        true
+                    }
+                } catch (_: Exception) {
+                    false
+                }
+            }
     }
 }
