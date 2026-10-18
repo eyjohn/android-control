@@ -150,16 +150,19 @@ def request(
     reason: str = typer.Option(
         "AI Agent Control", "--reason", "-r", help="Reason for requesting phone control"
     ),
-    ttl: str = typer.Option("10m", "--ttl", help="Session time-to-live (e.g. 5m, 10m, 30m, 300s)"),
+    ttl: str = typer.Option(
+        "0", "--ttl", help="Session time-to-live (0 or persistent for unlimited)"
+    ),
     provider: str = typer.Option(
         "firebase", "--provider", "-p", help="Signaling provider (firebase or local)"
     ),
-    wait: int = typer.Option(120, "--wait", "-w", help="Seconds to wait for user approval"),
+    wait: int = typer.Option(180, "--wait", "-w", help="Seconds to wait for user approval"),
 ):
     """Request on-approval phone control session and establish WebRTC DataChannel."""
-    ttl_seconds = 600
     ttl = ttl.strip().lower()
-    if ttl.endswith("m"):
+    if ttl in ("0", "persistent", "unlimited", "infinite", "none"):
+        ttl_seconds = 0
+    elif ttl.endswith("m"):
         ttl_seconds = int(ttl[:-1]) * 60
     elif ttl.endswith("s"):
         ttl_seconds = int(ttl[:-1])
@@ -167,9 +170,10 @@ def request(
         ttl_seconds = int(ttl)
 
     daemon = ControlDaemon(reason=reason, ttl_seconds=ttl_seconds, provider_name=provider)
+    ttl_desc = "persistent" if ttl_seconds == 0 else f"{ttl_seconds}s"
     rprint(
         f"[bold cyan]==>[/] Requesting session (SessionID: [yellow]{daemon.session_id}[/], "
-        f"TTL: {ttl_seconds}s)..."
+        f"Type: [green]{ttl_desc}[/])..."
     )
     rprint(f"[bold cyan]==>[/] Reason: [italic]{reason}[/]")
     rprint("[bold cyan]==>[/] Offer saved to [green]_scratch/session.webrtc[/] for manual pairing.")

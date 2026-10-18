@@ -25,6 +25,7 @@ class MainActivity : ComponentActivity() {
     private var rtcClient: WebRtcClient? = null
     private var sessionStatus by mutableStateOf("Idle (Waiting for request)")
     private var controlMode by mutableStateOf(ControlMode.ACCESSIBILITY)
+    private var isUserModeOverride by mutableStateOf(false)
     private var incomingOffer by mutableStateOf<SessionPayload?>(null)
     private var generatedAnswer by mutableStateOf<String?>(null)
     private var isAdbReachable by mutableStateOf<Boolean?>(null)
@@ -37,12 +38,21 @@ class MainActivity : ComponentActivity() {
         checkAdbStatus()
         handleIntent(intent)
 
-        // Metrics monitoring loop
+        // Metrics monitoring and periodic availability checks (1s tick, 3s adb check)
+        var adbCounter = 0
         lifecycleScope.launch {
             while (isActive) {
                 rtcClient?.let {
                     rxBytes = it.bytesReceived.get()
                     txBytes = it.bytesTransferred.get()
+                }
+                adbCounter++
+                if (adbCounter >= 3) {
+                    adbCounter = 0
+                    isAdbReachable = WebRtcClient.checkAdbPort("127.0.0.1", 5555)
+                }
+                if (!isUserModeOverride) {
+                    autoSelectBestMode()
                 }
                 delay(1000)
             }
@@ -52,7 +62,10 @@ class MainActivity : ComponentActivity() {
             AndroidControlTheme {
                 MainScreen(
                     controlMode = controlMode,
-                    onModeChange = { controlMode = it },
+                    onModeChange = {
+                        isUserModeOverride = true
+                        controlMode = it
+                    },
                     sessionStatus = sessionStatus,
                     incomingOffer = incomingOffer,
                     generatedAnswer = generatedAnswer,
@@ -63,20 +76,42 @@ class MainActivity : ComponentActivity() {
                     onLoadOffer = { loadOfferPayload(it) },
                     onApprove = { approveSession() },
                     onCopyAnswer = { copyAnswerToClipboard() },
-                    onDisconnect = { disconnectSession() }
+                    onDisconnect = { disconnectSession() },
+                    isAutoDetected = !isUserModeOverride,
+                    onResetAuto = {
+                        isUserModeOverride = false
+                        autoSelectBestMode()
+                    }
                 )
             }
         }
     }
 
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        handleIntent(intent)
+    override fun onResume() {
+        super.onResume()
+        checkAdbStatus()
+        autoSelectBestMode()
+    }
+
+    private fun autoSelectBestMode() {
+        if (isUserModeOverride) return
+        val a11yReady = com.evdev.androidcontrol.service.ControlAccessibilityService.isRunning
+        val adbReady = isAdbReachable == true
+
+        if (adbReady && !a11yReady) {
+            controlMode = ControlMode.ADB
+        } else if (a11yReady && !adbReady) {
+            controlMode = ControlMode.ACCESSIBILITY
+        } else if (adbReady && a11yReady) {
+            // Both ready: prefer ADB since local wireless debugging port is listening
+            controlMode = ControlMode.ADB
+        }
     }
 
     private fun checkAdbStatus() {
         lifecycleScope.launch {
             isAdbReachable = WebRtcClient.checkAdbPort("127.0.0.1", 5555)
+            autoSelectBestMode()
         }
     }
 

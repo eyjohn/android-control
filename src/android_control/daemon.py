@@ -123,27 +123,33 @@ class ControlDaemon:
 
     async def _ttl_monitor(self) -> None:
         while self._running:
-            elapsed = time.time() - self.start_time
-            if elapsed >= self.ttl_seconds:
-                await self.stop()
-                break
-            await asyncio.sleep(1.0)
+            if self.ttl_seconds > 0:
+                elapsed = time.time() - self.start_time
+                if elapsed >= self.ttl_seconds:
+                    await self.stop()
+                    break
+            await asyncio.sleep(2.0)
 
     async def _connection_monitor(self) -> None:
         """Monitors WebRTC connection health and auto-renegotiates
-        over signaling channel if lost."""
+        over signaling channel with exponential backoff on loss."""
+        backoff = 2.0
         while self._running:
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(backoff)
             if self._renegotiating:
                 continue
             if not self.host.is_ready and self._was_connected:
                 self._renegotiating = True
                 try:
                     await self._auto_renegotiate()
+                    backoff = 2.0
                 except Exception:
-                    pass
+                    # Exponential backoff to prevent radio wakeups & battery drain
+                    backoff = min(60.0, backoff * 1.5)
                 finally:
                     self._renegotiating = False
+            else:
+                backoff = 2.0
 
     async def _auto_renegotiate(self) -> None:
         """Performs automatic ICE restart / renegotiation via open signaling channel."""

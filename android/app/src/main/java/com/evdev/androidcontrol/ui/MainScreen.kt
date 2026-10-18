@@ -4,15 +4,19 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -22,6 +26,13 @@ import androidx.compose.ui.unit.sp
 import com.evdev.androidcontrol.model.ControlMode
 import com.evdev.androidcontrol.model.SessionPayload
 import com.evdev.androidcontrol.service.ControlAccessibilityService
+
+private fun formatBytes(bytes: Long): String {
+    if (bytes < 1024) return "$bytes B"
+    val exp = (Math.log(bytes.toDouble()) / Math.log(1024.0)).toInt()
+    val pre = "KMGTPE"[exp - 1]
+    return String.format(java.util.Locale.US, "%.1f %sB", bytes / Math.pow(1024.0, exp.toDouble()), pre)
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -39,6 +50,8 @@ fun MainScreen(
     onApprove: () -> Unit,
     onCopyAnswer: () -> Unit,
     onDisconnect: () -> Unit,
+    isAutoDetected: Boolean = true,
+    onResetAuto: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -75,6 +88,36 @@ fun MainScreen(
                         Text("Android Control", fontWeight = FontWeight.Bold)
                     }
                 },
+                actions = {
+                    if (isConnected) {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = Color(0xFF22C55E).copy(alpha = 0.2f),
+                            border = BorderStroke(1.dp, Color(0xFF22C55E)),
+                            modifier = Modifier.padding(end = 12.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF22C55E))
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "LIVE",
+                                    color = if (dark) Color(0xFF4ADE80) else Color(0xFF15803D),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    letterSpacing = 0.5.sp
+                                )
+                            }
+                        }
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp),
                     titleContentColor = MaterialTheme.colorScheme.onSurface
@@ -90,18 +133,45 @@ fun MainScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // 1. Control Mode Selector (Primary vs Alternative)
+            // 1. Control Mode Selector with Auto-detect status
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
-                    Text(
-                        text = "Control Mode",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Control Mode",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                        if (isAutoDetected) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            ) {
+                                Text(
+                                    text = "Auto-selected",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+                        } else {
+                            TextButton(
+                                onClick = onResetAuto,
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Text("Reset to Auto", fontSize = 11.sp)
+                            }
+                        }
+                    }
                     Spacer(modifier = Modifier.height(8.dp))
 
                     SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
@@ -250,31 +320,143 @@ fun MainScreen(
                 }
             }
 
-            // 3. Connection & Tunnel Status Card
+            // 3. Connection & Tunnel Status Card (Pronounced live container)
+            val statusCardBg = if (isConnected) {
+                if (dark) Color(0xFF0C2B14) else Color(0xFFE8F8ED)
+            } else if (incomingOffer != null) {
+                if (dark) Color(0xFF1E2838) else Color(0xFFEBF3FE)
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant
+            }
+
+            val statusCardBorder = if (isConnected) {
+                BorderStroke(2.dp, if (dark) Color(0xFF22C55E) else Color(0xFF16A34A))
+            } else if (incomingOffer != null) {
+                BorderStroke(1.dp, if (dark) Color(0xFF3B82F6) else Color(0xFF2563EB))
+            } else {
+                null
+            }
+
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                shape = RoundedCornerShape(12.dp)
+                colors = CardDefaults.cardColors(containerColor = statusCardBg),
+                border = statusCardBorder,
+                shape = RoundedCornerShape(14.dp)
             ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Text("Session Tunnel Status", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-                    Spacer(modifier = Modifier.height(6.dp))
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (isConnected) Color(0xFF22C55E)
+                                        else if (incomingOffer != null) Color(0xFF3B82F6)
+                                        else Color.Gray
+                                    )
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (isConnected) "ACTIVE WEBRTC TUNNEL" else "SESSION TUNNEL STATUS",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                letterSpacing = 0.5.sp,
+                                color = if (isConnected) {
+                                    if (dark) Color(0xFF4ADE80) else Color(0xFF15803D)
+                                } else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+
+                        if (isConnected) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (dark) Color(0xFF164E24) else Color(0xFFC7F2D5)
+                            ) {
+                                Text(
+                                    text = if (controlMode == ControlMode.ACCESSIBILITY) "Accessibility" else "ADB Bridge",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (dark) Color(0xFF86EFAC) else Color(0xFF14532D),
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = sessionStatus,
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        fontSize = if (isConnected) 15.sp else 14.sp,
+                        fontWeight = if (isConnected) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (isConnected) {
+                            if (dark) Color(0xFFE2FBE9) else Color(0xFF0F3918)
+                        } else MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
-                    if (isConnected && controlMode == ControlMode.ADB) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f))
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("Forwarding: 127.0.0.1:5555", fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                            Text("RX: $rxBytes B | TX: $txBytes B", fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                    if (isConnected) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        HorizontalDivider(
+                            color = if (dark) Color(0xFF22C55E).copy(alpha = 0.3f)
+                            else Color(0xFF16A34A).copy(alpha = 0.2f)
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        if (controlMode == ControlMode.ADB) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(
+                                        text = "Forwarding",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = "127.0.0.1:5555",
+                                        fontSize = 13.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text(
+                                        text = "DataChannel Traffic",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = "↓ ${formatBytes(rxBytes)}  ↑ ${formatBytes(txBytes)}",
+                                        fontSize = 13.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        } else {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Zero-daemon pure Accessibility RPC",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    text = "Ready",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (dark) Color(0xFF4ADE80) else Color(0xFF15803D)
+                                )
+                            }
                         }
                     }
                 }
@@ -304,7 +486,7 @@ fun MainScreen(
                         Text("Session Approval Request", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                         Text("Session ID: ${incomingOffer.sessionId}", fontSize = 13.sp, fontFamily = FontFamily.Monospace)
                         Text("Reason: ${incomingOffer.reason}", fontWeight = FontWeight.Medium, fontSize = 14.sp)
-                        Text("TTL: ${incomingOffer.ttlSeconds / 60} minutes", fontSize = 13.sp)
+                        Text("Type: Persistent Session (Auto-reconnect)", fontSize = 13.sp)
 
                         Text(
                             text = if (controlMode == ControlMode.ACCESSIBILITY) {
