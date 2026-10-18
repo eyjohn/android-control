@@ -13,6 +13,7 @@ import typer
 from rich import print as rprint
 from rich.console import Console
 
+from android_control.adb_driver import AdbDriver
 from android_control.daemon import ControlDaemon, client_rpc
 from android_control.protocol import (
     UiElement,
@@ -30,6 +31,44 @@ console = Console()
 
 def run_async(coro):
     return asyncio.run(coro)
+
+
+def get_backend():
+    """Returns 'daemon' if active WebRTC session, otherwise 'adb' if ADB device is connected."""
+    from android_control.daemon import SOCKET_PATH
+
+    if SOCKET_PATH.exists():
+        return "daemon"
+    adb = AdbDriver()
+    if adb.is_connected():
+        return "adb"
+    return "none"
+
+
+@app.command()
+def wifi(
+    port: int = typer.Option(5555, "--port", "-p", help="TCP port for ADB over Wi-Fi"),
+):
+    """Enable ADB over Wi-Fi on connected USB device, discover IP, and connect."""
+    adb = AdbDriver()
+    if not adb.is_connected():
+        rprint("[bold red]Error:[/] No authorized device found. Unlock phone and tap Allow first.")
+        sys.exit(1)
+
+    ip = adb.get_wlan_ip()
+    if not ip:
+        rprint("[bold red]Error:[/] Could not detect phone Wi-Fi IP. Ensure phone is on Wi-Fi.")
+        sys.exit(1)
+
+    rprint(f"[bold cyan]==>[/] Phone Wi-Fi IP: [green]{ip}[/]")
+    rprint(f"[bold cyan]==>[/] Switching adbd to TCP/IP port {port}...")
+    adb.enable_tcpip(port)
+
+    rprint(f"[bold cyan]==>[/] Connecting to {ip}:{port}...")
+    if adb.connect(ip, port):
+        rprint(f"[bold green]✔ Connected over Wi-Fi to {ip}:{port}![/] USB can now be unplugged.")
+    else:
+        rprint(f"[bold yellow]Connect failed. Try:[/] adb connect {ip}:{port}")
 
 
 @app.command()
@@ -74,12 +113,24 @@ def request(
 @app.command()
 def status():
     """Print connection status, remaining TTL, and device information."""
-    try:
-        res = run_async(client_rpc("session.status"))
-        rprint(json.dumps(res, indent=2))
-    except Exception as e:
-        rprint(f"[bold red]Offline:[/] {e}")
-        sys.exit(1)
+    backend = get_backend()
+    if backend == "daemon":
+        try:
+            res = run_async(client_rpc("session.status"))
+            rprint(json.dumps(res, indent=2))
+            return
+        except Exception:
+            pass
+    elif backend == "adb":
+        adb = AdbDriver()
+        pkg = adb.get_foreground_package()
+        rprint(
+            json.dumps({"driver": "adb", "connected": True, "foreground_package": pkg}, indent=2)
+        )
+        return
+
+    rprint("[bold red]Offline:[/] No active WebRTC session and no connected ADB device.")
+    sys.exit(1)
 
 
 @app.command()
@@ -92,8 +143,17 @@ def layout(
     output: Optional[Path] = typer.Option(None, "-o", "--output", help="Save layout JSON to file"),
 ):
     """Dump UI layout hierarchy or interactive elements."""
+    backend = get_backend()
+    if backend == "none":
+        rprint("[bold red]Error:[/] No active WebRTC session or connected ADB device.")
+        sys.exit(1)
+
     try:
-        res = run_async(client_rpc("layout", {"flat": flat, "full": full}))
+        if backend == "adb":
+            res = AdbDriver().layout(flat=flat, full=full).model_dump()
+        else:
+            res = run_async(client_rpc("layout", {"flat": flat, "full": full}))
+
         cache_path = Path("_scratch/last_layout.json")
 
         if diff and cache_path.exists():
@@ -102,7 +162,7 @@ def layout(
                 old_elems = [UiElement.model_validate(e) for e in old_data.get("elements", [])]
                 new_elems = [UiElement.model_validate(e) for e in res.get("elements", [])]
                 diff_res = compute_layout_diff(old_elems, new_elems)
-                diff_res["package"] = res.get("package")
+                diff_res["package"] = res.get("package") or res.get("package_name")
                 rprint(json.dumps(diff_res, indent=2))
                 return
             except Exception:
@@ -134,8 +194,17 @@ def screen(
     quality: int = typer.Option(80, "--quality", help="Image quality compression"),
 ):
     """Capture phone screenshot and element coordinate map."""
+    backend = get_backend()
+    if backend == "none":
+        rprint("[bold red]Error:[/] No active WebRTC session or connected ADB device.")
+        sys.exit(1)
+
     try:
-        res = run_async(client_rpc("screen", {"annotate": annotate, "quality": quality}))
+        if backend == "adb":
+            res = AdbDriver().screen(annotate=annotate, quality=quality).model_dump()
+        else:
+            res = run_async(client_rpc("screen", {"annotate": annotate, "quality": quality}))
+
         img_b64 = res.get("image_base64", "")
         if not img_b64:
             raise RuntimeError("No image data returned from device")
@@ -198,19 +267,44 @@ def tap(
     ),
 ):
     """Tap coordinate or node index."""
-    try:
-        params = {}
-        if node is not None:
-            params["node_index"] = node
-        elif x is not None and y is not None:
-            params["x"] = x
-            params["y"] = y
-        else:
-            rprint("[bold red]Error:[/] Specify either x y coordinates or --node <index>")
-            sys.exit(1)
+    backend = get_backend()
+    if backend == "none":
+        rprint("[bold red]Error:[/] No active WebRTC session or connected ADB device.")
+        sys.exit(1)
 
-        res = run_async(client_rpc("tap", params))
-        rprint(f"[bold green]✔ Tapped:[/] {res}")
+    try:
+        if backend == "adb":
+            adb = AdbDriver()
+            if node is not None:
+                map_path = Path("_scratch/screen.png.map.json")
+                if map_path.exists():
+                    annotations = json.loads(map_path.read_text())
+                    coords = resolve_node_target(str(node), annotations)
+                    if coords:
+                        x, y = coords[0], coords[1]
+                if x is None or y is None:
+                    layout_data = adb.layout()
+                    elem = next((e for e in layout_data.elements if e.index == node), None)
+                    if elem and len(elem.center) == 2:
+                        x, y = elem.center[0], elem.center[1]
+            if x is None or y is None:
+                rprint("[bold red]Error:[/] Specify coordinates x y or valid --node <index>")
+                sys.exit(1)
+            success = adb.tap(x, y)
+            rprint(f"[bold green]✔ Tapped ({x}, {y}):[/] ok={success}")
+        else:
+            params = {}
+            if node is not None:
+                params["node_index"] = node
+            elif x is not None and y is not None:
+                params["x"] = x
+                params["y"] = y
+            else:
+                rprint("[bold red]Error:[/] Specify either x y coordinates or --node <index>")
+                sys.exit(1)
+
+            res = run_async(client_rpc("tap", params))
+            rprint(f"[bold green]✔ Tapped:[/] {res}")
     except Exception as e:
         rprint(f"[bold red]Error:[/] {e}")
         sys.exit(1)
@@ -223,9 +317,18 @@ def long_press(
     duration_ms: int = typer.Option(600, "--duration", "-d", help="Long-press duration in ms"),
 ):
     """Long-press coordinates."""
+    backend = get_backend()
+    if backend == "none":
+        rprint("[bold red]Error:[/] No active WebRTC session or connected ADB device.")
+        sys.exit(1)
+
     try:
-        res = run_async(client_rpc("tap", {"x": x, "y": y, "duration_ms": duration_ms}))
-        rprint(f"[bold green]✔ Long-pressed:[/] {res}")
+        if backend == "adb":
+            success = AdbDriver().tap(x, y, duration_ms=duration_ms)
+            rprint(f"[bold green]✔ Long-pressed ({x}, {y}):[/] ok={success}")
+        else:
+            res = run_async(client_rpc("tap", {"x": x, "y": y, "duration_ms": duration_ms}))
+            rprint(f"[bold green]✔ Long-pressed:[/] {res}")
     except Exception as e:
         rprint(f"[bold red]Error:[/] {e}")
         sys.exit(1)
@@ -240,13 +343,22 @@ def swipe(
     duration_ms: int = typer.Option(300, "--duration", "-d", help="Duration in ms"),
 ):
     """Swipe gesture between coordinates."""
+    backend = get_backend()
+    if backend == "none":
+        rprint("[bold red]Error:[/] No active WebRTC session or connected ADB device.")
+        sys.exit(1)
+
     try:
-        res = run_async(
-            client_rpc(
-                "swipe", {"x1": x1, "y1": y1, "x2": x2, "y2": y2, "duration_ms": duration_ms}
+        if backend == "adb":
+            success = AdbDriver().swipe(x1, y1, x2, y2, duration_ms=duration_ms)
+            rprint(f"[bold green]✔ Swiped ({x1},{y1}) -> ({x2},{y2}):[/] ok={success}")
+        else:
+            res = run_async(
+                client_rpc(
+                    "swipe", {"x1": x1, "y1": y1, "x2": x2, "y2": y2, "duration_ms": duration_ms}
+                )
             )
-        )
-        rprint(f"[bold green]✔ Swiped:[/] {res}")
+            rprint(f"[bold green]✔ Swiped:[/] {res}")
     except Exception as e:
         rprint(f"[bold red]Error:[/] {e}")
         sys.exit(1)
@@ -260,12 +372,30 @@ def text(
     node: Optional[int] = typer.Option(None, "--node", "-n", help="Target node index"),
 ):
     """Input text into focused field or specified node."""
+    backend = get_backend()
+    if backend == "none":
+        rprint("[bold red]Error:[/] No active WebRTC session or connected ADB device.")
+        sys.exit(1)
+
     try:
-        params = {"text": content, "clear": clear, "submit": submit}
-        if node is not None:
-            params["node_index"] = node
-        res = run_async(client_rpc("text", params))
-        rprint(f"[bold green]✔ Entered text:[/] {res}")
+        if backend == "adb":
+            adb = AdbDriver()
+            if node is not None:
+                # Tap node first to focus
+                map_path = Path("_scratch/screen.png.map.json")
+                if map_path.exists():
+                    annotations = json.loads(map_path.read_text())
+                    coords = resolve_node_target(str(node), annotations)
+                    if coords:
+                        adb.tap(coords[0], coords[1])
+            success = adb.text(content, clear=clear, submit=submit)
+            rprint(f"[bold green]✔ Entered text:[/] ok={success}")
+        else:
+            params = {"text": content, "clear": clear, "submit": submit}
+            if node is not None:
+                params["node_index"] = node
+            res = run_async(client_rpc("text", params))
+            rprint(f"[bold green]✔ Entered text:[/] {res}")
     except Exception as e:
         rprint(f"[bold red]Error:[/] {e}")
         sys.exit(1)
@@ -280,9 +410,18 @@ def key(
 ):
     """Trigger system navigation or global hardware action."""
     action = action.upper()
+    backend = get_backend()
+    if backend == "none":
+        rprint("[bold red]Error:[/] No active WebRTC session or connected ADB device.")
+        sys.exit(1)
+
     try:
-        res = run_async(client_rpc("key", {"action": action}))
-        rprint(f"[bold green]✔ Key action {action}:[/] {res}")
+        if backend == "adb":
+            success = AdbDriver().key(action)
+            rprint(f"[bold green]✔ Key action {action}:[/] ok={success}")
+        else:
+            res = run_async(client_rpc("key", {"action": action}))
+            rprint(f"[bold green]✔ Key action {action}:[/] {res}")
     except Exception as e:
         rprint(f"[bold red]Error:[/] {e}")
         sys.exit(1)
@@ -293,9 +432,18 @@ def launch(
     target: str = typer.Argument(..., help="Package name (e.g. com.whatsapp) or URI intent"),
 ):
     """Launch an application or URI intent."""
+    backend = get_backend()
+    if backend == "none":
+        rprint("[bold red]Error:[/] No active WebRTC session or connected ADB device.")
+        sys.exit(1)
+
     try:
-        res = run_async(client_rpc("app.launch", {"package": target}))
-        rprint(f"[bold green]✔ Launched {target}:[/] {res}")
+        if backend == "adb":
+            success = AdbDriver().launch(target)
+            rprint(f"[bold green]✔ Launched {target}:[/] ok={success}")
+        else:
+            res = run_async(client_rpc("app.launch", {"package": target}))
+            rprint(f"[bold green]✔ Launched {target}:[/] {res}")
     except Exception as e:
         rprint(f"[bold red]Error:[/] {e}")
         sys.exit(1)
