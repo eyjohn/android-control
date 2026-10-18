@@ -1,4 +1,4 @@
-"""WebRTC PeerConnection and DataChannel RPC transport using aiortc."""
+"""WebRTC PeerConnection and dual DataChannel (control + adb) transport using aiortc."""
 
 from __future__ import annotations
 
@@ -22,18 +22,22 @@ class WebRtcHost:
         self,
         stun_servers: Optional[list[str]] = None,
         on_state_change: Optional[Callable[[str], None]] = None,
+        on_adb_data: Optional[Callable[[bytes], None]] = None,
     ):
         servers = stun_servers or ["stun:stun.l.google.com:19302"]
         self.config = RTCConfiguration(iceServers=[RTCIceServer(urls=servers)])
         self.pc: Optional[RTCPeerConnection] = None
         self.channel: Optional[Any] = None
+        self.adb_channel: Optional[Any] = None
         self.on_state_change = on_state_change
+        self.on_adb_data = on_adb_data
         self._pending_responses: Dict[str, asyncio.Future[RpcResponse]] = {}
         self._channel_open_event = asyncio.Event()
+        self.adb_channel_open_event = asyncio.Event()
         self._connected = False
 
     async def create_offer(self) -> str:
-        """Creates RTCPeerConnection, sets up DataChannel, and returns complete SDP offer."""
+        """Creates RTCPeerConnection, sets up control + adb DataChannels, returns SDP offer."""
         self.pc = RTCPeerConnection(configuration=self.config)
 
         @self.pc.on("connectionstatechange")
@@ -47,6 +51,7 @@ class WebRtcHost:
                 elif state in ["failed", "closed"]:
                     self._connected = False
 
+        # 1. Control channel (JSON-RPC)
         self.channel = self.pc.createDataChannel("control", ordered=True)
 
         @self.channel.on("open")
@@ -61,6 +66,25 @@ class WebRtcHost:
         def on_close():
             self._channel_open_event.clear()
             self._connected = False
+
+        # 2. ADB binary tunnel channel
+        self.adb_channel = self.pc.createDataChannel("adb", ordered=True)
+
+        @self.adb_channel.on("open")
+        def on_adb_open():
+            self.adb_channel_open_event.set()
+
+        @self.adb_channel.on("message")
+        def on_adb_message(message):
+            if self.on_adb_data:
+                if isinstance(message, str):
+                    self.on_adb_data(message.encode("utf-8"))
+                else:
+                    self.on_adb_data(message)
+
+        @self.adb_channel.on("close")
+        def on_adb_close():
+            self.adb_channel_open_event.clear()
 
         offer = await self.pc.createOffer()
         await self.pc.setLocalDescription(offer)
@@ -85,12 +109,17 @@ class WebRtcHost:
         await self.pc.setRemoteDescription(answer)
 
     async def wait_until_connected(self, timeout: float = 30.0) -> None:
-        """Wait until DataChannel is open and ready to transmit."""
+        """Wait until control DataChannel is open and ready to transmit."""
         await asyncio.wait_for(self._channel_open_event.wait(), timeout=timeout)
 
     @property
     def is_ready(self) -> bool:
         return self.channel is not None and self.channel.readyState == "open"
+
+    def send_adb_bytes(self, data: bytes) -> None:
+        """Sends binary data chunk through ADB WebRTC DataChannel to phone."""
+        if self.adb_channel and self.adb_channel.readyState == "open":
+            self.adb_channel.send(data)
 
     def _handle_message(self, message: Any) -> None:
         try:
@@ -105,7 +134,6 @@ class WebRtcHost:
             if future and not future.done():
                 future.set_result(resp)
         except Exception:
-            # Drop malformed response or log
             pass
 
     async def send_rpc(
@@ -135,15 +163,22 @@ class WebRtcHost:
             raise TimeoutError(f"RPC method '{method}' timed out after {timeout}s")
 
     async def close(self) -> None:
-        """Closes DataChannel and PeerConnection."""
+        """Closes DataChannels and PeerConnection."""
         self._connected = False
         self._channel_open_event.clear()
+        self.adb_channel_open_event.clear()
 
-        # Cancel any pending futures
         for fut in self._pending_responses.values():
             if not fut.done():
                 fut.cancel()
         self._pending_responses.clear()
+
+        if self.adb_channel:
+            try:
+                self.adb_channel.close()
+            except Exception:
+                pass
+            self.adb_channel = None
 
         if self.channel:
             try:

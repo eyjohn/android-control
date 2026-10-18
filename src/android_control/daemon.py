@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import subprocess
 import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from android_control.adb_bridge import AdbWebRtcBridge
 from android_control.protocol import RpcError, RpcResponse
 from android_control.rtc import WebRtcHost
 from android_control.signaling.base import SessionOffer, SignalingProvider
@@ -32,6 +34,7 @@ class ControlDaemon:
         self.provider_name = provider_name
         self.session_id = f"sess-{uuid.uuid4().hex[:8]}"
         self.host = WebRtcHost()
+        self.adb_bridge = AdbWebRtcBridge(self.host, local_port=55555)
         self.signaling: SignalingProvider = self._resolve_signaling()
         self.server: Optional[asyncio.Server] = None
         self.start_time: float = 0
@@ -80,7 +83,14 @@ class ControlDaemon:
         await self.host.apply_answer(answer.sdp)
         await self.host.wait_until_connected(timeout=20.0)
 
-        # 5. Start local IPC server
+        # 5. Start ADB tunnel and auto-connect
+        try:
+            await self.adb_bridge.start()
+            subprocess.run(["adb", "connect", "127.0.0.1:55555"], capture_output=True)
+        except Exception:
+            pass
+
+        # 6. Start local IPC server
         SOCKET_PATH.parent.mkdir(parents=True, exist_ok=True)
         if SOCKET_PATH.exists():
             SOCKET_PATH.unlink()
@@ -166,6 +176,12 @@ class ControlDaemon:
 
     async def stop(self) -> None:
         self._running = False
+        try:
+            subprocess.run(["adb", "disconnect", "127.0.0.1:55555"], capture_output=True)
+            await self.adb_bridge.stop()
+        except Exception:
+            pass
+
         if self.server:
             self.server.close()
             await self.server.wait_closed()

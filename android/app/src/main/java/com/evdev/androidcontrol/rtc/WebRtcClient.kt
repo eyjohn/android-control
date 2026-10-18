@@ -6,10 +6,13 @@ import com.evdev.androidcontrol.service.ControlAccessibilityService
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.encodeToJsonElement
 import org.webrtc.*
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 
@@ -21,7 +24,11 @@ class WebRtcClient(
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private var factory: PeerConnectionFactory? = null
     private var peerConnection: PeerConnection? = null
-    private var dataChannel: DataChannel? = null
+    private var controlChannel: DataChannel? = null
+    private var adbChannel: DataChannel? = null
+
+    private var adbSocket: Socket? = null
+    private var adbForwardJob: Job? = null
 
     init {
         val options = PeerConnectionFactory.InitializationOptions.builder(context)
@@ -54,8 +61,14 @@ class WebRtcClient(
             override fun onAddStream(stream: MediaStream?) {}
             override fun onRemoveStream(stream: MediaStream?) {}
             override fun onDataChannel(channel: DataChannel?) {
-                dataChannel = channel
-                setupDataChannel(channel)
+                if (channel == null) return
+                if (channel.label() == "adb") {
+                    adbChannel = channel
+                    setupAdbDataChannel(channel)
+                } else {
+                    controlChannel = channel
+                    setupControlDataChannel(channel)
+                }
             }
             override fun onRenegotiationNeeded() {}
             override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {}
@@ -109,11 +122,11 @@ class WebRtcClient(
         return answerDesc.description
     }
 
-    private fun setupDataChannel(channel: DataChannel?) {
-        channel?.registerObserver(object : DataChannel.Observer {
+    private fun setupControlDataChannel(channel: DataChannel) {
+        channel.registerObserver(object : DataChannel.Observer {
             override fun onBufferedAmountChange(previousAmount: Long) {}
             override fun onStateChange() {
-                onStateChange("DataChannel: ${channel.state()}")
+                onStateChange("Control Channel: ${channel.state()}")
             }
 
             override fun onMessage(buffer: DataChannel.Buffer?) {
@@ -157,12 +170,103 @@ class WebRtcClient(
         channel.send(buffer)
     }
 
+    private fun setupAdbDataChannel(channel: DataChannel) {
+        channel.registerObserver(object : DataChannel.Observer {
+            override fun onBufferedAmountChange(previousAmount: Long) {}
+            override fun onStateChange() {
+                val state = channel.state()
+                onStateChange("ADB Bridge: $state")
+                if (state == DataChannel.State.OPEN) {
+                    startAdbForwarder(channel)
+                } else if (state == DataChannel.State.CLOSED) {
+                    stopAdbForwarder()
+                }
+            }
+
+            override fun onMessage(buffer: DataChannel.Buffer?) {
+                if (buffer == null) return
+                val bytes = ByteArray(buffer.data.remaining())
+                buffer.data.get(bytes)
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        val sock = getOrCreateAdbSocket()
+                        if (sock != null && !sock.isClosed) {
+                            val out = sock.getOutputStream()
+                            out.write(bytes)
+                            out.flush()
+                        }
+                    } catch (e: Exception) {
+                        closeAdbSocket()
+                    }
+                }
+            }
+        })
+    }
+
+    private fun startAdbForwarder(channel: DataChannel) {
+        adbForwardJob?.cancel()
+        adbForwardJob = scope.launch(Dispatchers.IO) {
+            val buf = ByteArray(16 * 1024)
+            while (isActive && channel.state() == DataChannel.State.OPEN) {
+                val sock = getOrCreateAdbSocket()
+                if (sock == null || sock.isClosed) {
+                    kotlinx.coroutines.delay(500)
+                    continue
+                }
+                try {
+                    val read = sock.getInputStream().read(buf)
+                    if (read > 0) {
+                        val chunk = buf.copyOf(read)
+                        val sendBuf = DataChannel.Buffer(ByteBuffer.wrap(chunk), true)
+                        channel.send(sendBuf)
+                    } else if (read < 0) {
+                        closeAdbSocket()
+                    }
+                } catch (e: Exception) {
+                    closeAdbSocket()
+                }
+            }
+        }
+    }
+
+    @Synchronized
+    private fun getOrCreateAdbSocket(): Socket? {
+        val s = adbSocket
+        if (s != null && !s.isClosed && s.isConnected) {
+            return s
+        }
+        return try {
+            val newSocket = Socket()
+            newSocket.connect(InetSocketAddress("127.0.0.1", 5555), 2000)
+            adbSocket = newSocket
+            newSocket
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    @Synchronized
+    private fun closeAdbSocket() {
+        try {
+            adbSocket?.close()
+        } catch (_: Exception) {}
+        adbSocket = null
+    }
+
+    private fun stopAdbForwarder() {
+        adbForwardJob?.cancel()
+        adbForwardJob = null
+        closeAdbSocket()
+    }
+
     fun close() {
-        dataChannel?.dispose()
-        dataChannel = null
+        stopAdbForwarder()
+        controlChannel?.dispose()
+        controlChannel = null
+        adbChannel?.dispose()
+        adbChannel = null
         peerConnection?.close()
         peerConnection?.dispose()
         peerConnection = null
     }
 }
-
