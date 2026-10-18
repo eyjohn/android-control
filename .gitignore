@@ -26,3 +26,12 @@ google-services.json
 local.properties
 .env
 
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/

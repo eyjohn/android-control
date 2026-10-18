@@ -33,15 +33,21 @@ def run_async(coro):
     return asyncio.run(coro)
 
 
-def get_backend():
-    """Returns 'daemon' if active WebRTC session, otherwise 'adb' if ADB device is connected."""
+def get_backend(driver: Optional[str] = None):
+    """Prioritizes ADB (Wi-Fi/USB) when available for deeper access,
+    falls back to Accessibility daemon."""
     from android_control.daemon import SOCKET_PATH
 
-    if SOCKET_PATH.exists():
+    if driver == "a11y":
         return "daemon"
+    if driver == "adb":
+        return "adb"
+
     adb = AdbDriver()
     if adb.is_connected():
         return "adb"
+    if SOCKET_PATH.exists():
+        return "daemon"
     return "none"
 
 
@@ -83,7 +89,6 @@ def request(
     wait: int = typer.Option(120, "--wait", "-w", help="Seconds to wait for user approval"),
 ):
     """Request on-approval phone control session and establish WebRTC DataChannel."""
-    # Parse TTL
     ttl_seconds = 600
     ttl = ttl.strip().lower()
     if ttl.endswith("m"):
@@ -112,25 +117,68 @@ def request(
 
 @app.command()
 def status():
-    """Print connection status, remaining TTL, and device information."""
-    backend = get_backend()
-    if backend == "daemon":
+    """Print connection status, active driver, and device information."""
+    adb = AdbDriver()
+    if adb.is_connected():
+        pkg = adb.get_foreground_package()
+        serial = adb.get_active_serial() or "unknown"
+        if serial.startswith("127.0.0.1:55555"):
+            mode = "webrtc_adb"
+        elif ":" in serial:
+            mode = "wifi"
+        else:
+            mode = "usb"
+        rprint(
+            json.dumps(
+                {
+                    "driver": "adb",
+                    "transport": mode,
+                    "target": serial,
+                    "connected": True,
+                    "foreground_package": pkg,
+                    "capabilities": [
+                        "full_shell",
+                        "screencap",
+                        "uiautomator",
+                        "input_events",
+                        "pm_am",
+                    ],
+                },
+                indent=2,
+            )
+        )
+        return
+
+    from android_control.daemon import SOCKET_PATH
+
+    if SOCKET_PATH.exists():
         try:
             res = run_async(client_rpc("session.status"))
+            res["driver"] = "accessibility"
+            res["transport"] = "webrtc"
             rprint(json.dumps(res, indent=2))
             return
         except Exception:
             pass
-    elif backend == "adb":
-        adb = AdbDriver()
-        pkg = adb.get_foreground_package()
-        rprint(
-            json.dumps({"driver": "adb", "connected": True, "foreground_package": pkg}, indent=2)
-        )
-        return
 
-    rprint("[bold red]Offline:[/] No active WebRTC session and no connected ADB device.")
+    rprint(
+        "[bold red]Offline:[/] No connected ADB device and no active Accessibility WebRTC session."
+    )
     sys.exit(1)
+
+
+@app.command()
+def shell(
+    command: str = typer.Argument(..., help="Shell command to run on device via ADB"),
+):
+    """Run arbitrary adb shell command on device (ADB mode only)."""
+    adb = AdbDriver()
+    if not adb.is_connected():
+        rprint("[bold red]Error:[/] ADB device not connected. Shell commands require ADB mode.")
+        sys.exit(1)
+
+    output = adb.shell(command)
+    print(output, end="")
 
 
 @app.command()

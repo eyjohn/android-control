@@ -23,21 +23,26 @@ class AdbDriver:
     def __init__(self, serial: Optional[str] = None):
         self.serial = serial
 
+    def get_active_serial(self) -> Optional[str]:
+        if self.serial:
+            return self.serial
+        env_serial = os.getenv("ANDROID_SERIAL")
+        if env_serial:
+            return env_serial
+        dev_res = subprocess.run(["adb", "devices"], capture_output=True)
+        devices = []
+        for line in dev_res.stdout.decode("utf-8", errors="ignore").splitlines()[1:]:
+            parts = line.split()
+            if len(parts) >= 2 and parts[1] == "device":
+                devices.append(parts[0])
+        wifi_devs = [d for d in devices if ":" in d]
+        return wifi_devs[0] if wifi_devs else (devices[0] if devices else None)
+
     def _run_adb(
         self, args: List[str], timeout: float = 15.0
     ) -> subprocess.CompletedProcess[bytes]:
         cmd = ["adb"]
-        serial = self.serial or os.getenv("ANDROID_SERIAL")
-        if not serial and args != ["devices"]:
-            dev_res = subprocess.run(["adb", "devices"], capture_output=True)
-            devices = []
-            for line in dev_res.stdout.decode("utf-8", errors="ignore").splitlines()[1:]:
-                parts = line.split()
-                if len(parts) >= 2 and parts[1] == "device":
-                    devices.append(parts[0])
-            wifi_devs = [d for d in devices if ":" in d]
-            serial = wifi_devs[0] if wifi_devs else (devices[0] if devices else None)
-
+        serial = self.get_active_serial() if args != ["devices"] else self.serial
         if serial:
             cmd.extend(["-s", serial])
         cmd.extend(args)
@@ -242,6 +247,11 @@ class AdbDriver:
         keycode = key_map.get(act, "4")
         res = self._run_adb(["shell", "input", "keyevent", keycode])
         return res.returncode == 0
+
+    def shell(self, command: str) -> str:
+        """Executes arbitrary adb shell command on device."""
+        res = self._run_adb(["shell", command])
+        return res.stdout.decode("utf-8", errors="ignore")
 
     def launch(self, package_or_uri: str) -> bool:
         if "://" in package_or_uri:
