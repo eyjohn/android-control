@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import io
+import os
 import re
 import subprocess
 import xml.etree.ElementTree as ET
@@ -26,8 +27,19 @@ class AdbDriver:
         self, args: List[str], timeout: float = 15.0
     ) -> subprocess.CompletedProcess[bytes]:
         cmd = ["adb"]
-        if self.serial:
-            cmd.extend(["-s", self.serial])
+        serial = self.serial or os.getenv("ANDROID_SERIAL")
+        if not serial and args != ["devices"]:
+            dev_res = subprocess.run(["adb", "devices"], capture_output=True)
+            devices = []
+            for line in dev_res.stdout.decode("utf-8", errors="ignore").splitlines()[1:]:
+                parts = line.split()
+                if len(parts) >= 2 and parts[1] == "device":
+                    devices.append(parts[0])
+            wifi_devs = [d for d in devices if ":" in d]
+            serial = wifi_devs[0] if wifi_devs else (devices[0] if devices else None)
+
+        if serial:
+            cmd.extend(["-s", serial])
         cmd.extend(args)
         return subprocess.run(cmd, capture_output=True, timeout=timeout)
 
