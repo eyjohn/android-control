@@ -61,7 +61,20 @@ fun MainScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Android Control", fontWeight = FontWeight.Bold) },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            painter = androidx.compose.ui.res.painterResource(
+                                id = com.evdev.androidcontrol.R.drawable.ic_logo
+                            ),
+                            contentDescription = "Android Remote Control Logo",
+                            modifier = Modifier.size(32.dp),
+                            tint = Color.Unspecified
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text("Android Control", fontWeight = FontWeight.Bold)
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp),
                     titleContentColor = MaterialTheme.colorScheme.onSurface
