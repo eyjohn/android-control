@@ -2,7 +2,7 @@ package com.evdev.androidcontrol.ui
 
 import android.content.Intent
 import android.provider.Settings
-import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -27,6 +27,7 @@ fun MainScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val dark = isSystemInDarkTheme()
     var isA11yActive by remember { mutableStateOf(ControlAccessibilityService.isRunning) }
 
     LaunchedEffect(Unit) {
@@ -36,13 +37,25 @@ fun MainScreen(
         }
     }
 
+    val a11yCardBg = if (isA11yActive) {
+        if (dark) Color(0xFF1C3822) else Color(0xFFE8F5E9)
+    } else {
+        if (dark) Color(0xFF3E1D1D) else Color(0xFFFFEBEE)
+    }
+
+    val a11yStatusColor = if (isA11yActive) {
+        if (dark) Color(0xFF81C784) else Color(0xFF2E7D32)
+    } else {
+        if (dark) Color(0xFFE57373) else Color(0xFFC62828)
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Android Control", fontWeight = FontWeight.Bold) },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp),
+                    titleContentColor = MaterialTheme.colorScheme.onSurface
                 )
             )
         }
@@ -57,9 +70,7 @@ fun MainScreen(
             // A11y Service Status Card
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isA11yActive) Color(0xFFE8F5E9) else Color(0xFFFFEBEE)
-                ),
+                colors = CardDefaults.cardColors(containerColor = a11yCardBg),
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Row(
@@ -77,7 +88,7 @@ fun MainScreen(
                         )
                         Text(
                             text = if (isA11yActive) "Running & Ready" else "Disabled in System Settings",
-                            color = if (isA11yActive) Color(0xFF2E7D32) else Color(0xFFC62828),
+                            color = a11yStatusColor,
                             fontSize = 14.sp
                         )
                     }
@@ -97,12 +108,17 @@ fun MainScreen(
             // Connection Status Card
             Card(
                 modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("Connection Status", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
                     Spacer(modifier = Modifier.height(6.dp))
-                    Text(text = sessionStatus, fontSize = 14.sp, color = MaterialTheme.colorScheme.outline)
+                    Text(
+                        text = sessionStatus,
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
 
@@ -134,7 +150,9 @@ fun MainScreen(
                                 onClick = onApprove,
                                 modifier = Modifier.weight(1f),
                                 enabled = isA11yActive,
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (dark) Color(0xFF388E3C) else Color(0xFF2E7D32)
+                                )
                             ) {
                                 Text("Approve & Connect")
                             }
@@ -162,4 +180,3 @@ fun MainScreen(
         }
     }
 }
-

@@ -25,13 +25,15 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
 
         setContent {
-            MainScreen(
-                sessionStatus = sessionStatus,
-                incomingReason = incomingReason,
-                incomingTtl = incomingTtl,
-                onApprove = { approveSession() },
-                onDisconnect = { disconnectSession() }
-            )
+            com.evdev.androidcontrol.ui.AndroidControlTheme {
+                MainScreen(
+                    sessionStatus = sessionStatus,
+                    incomingReason = incomingReason,
+                    incomingTtl = incomingTtl,
+                    onApprove = { approveSession() },
+                    onDisconnect = { disconnectSession() }
+                )
+            }
         }
     }
 
