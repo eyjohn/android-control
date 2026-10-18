@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
+from typing import Callable, Optional
 
 from rich import print as rprint
 
@@ -11,9 +11,15 @@ from android_control.rtc import WebRtcHost
 
 
 class AdbWebRtcBridge:
-    def __init__(self, host: WebRtcHost, local_port: int = 55555):
+    def __init__(
+        self,
+        host: WebRtcHost,
+        local_port: int = 55555,
+        on_activity: Optional[Callable[[], None]] = None,
+    ):
         self.host = host
         self.local_port = local_port
+        self.on_activity = on_activity
         self.server: Optional[asyncio.Server] = None
         self.active_writer: Optional[asyncio.StreamWriter] = None
 
@@ -21,6 +27,8 @@ class AdbWebRtcBridge:
         self.host.on_adb_data = self._on_remote_bytes
 
     def _on_remote_bytes(self, data: bytes) -> None:
+        if self.on_activity:
+            self.on_activity()
         if self.active_writer and not self.active_writer.is_closing():
             try:
                 self.active_writer.write(data)
@@ -47,6 +55,8 @@ class AdbWebRtcBridge:
                 chunk = await reader.read(16 * 1024)
                 if not chunk:
                     break
+                if self.on_activity:
+                    self.on_activity()
                 self.host.send_adb_bytes(chunk)
                 await asyncio.sleep(0)
         except Exception:

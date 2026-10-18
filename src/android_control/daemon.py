@@ -33,14 +33,21 @@ class ControlDaemon:
         self.ttl_seconds = ttl_seconds
         self.provider_name = provider_name
         self.session_id = f"sess-{uuid.uuid4().hex[:8]}"
+        self.idle_timeout_seconds: float = 60.0
+        self.last_activity_time: float = time.time()
         self.host = WebRtcHost()
-        self.adb_bridge = AdbWebRtcBridge(self.host, local_port=55555)
+        self.adb_bridge = AdbWebRtcBridge(
+            self.host, local_port=55555, on_activity=self._touch_activity
+        )
         self.signaling: SignalingProvider = self._resolve_signaling()
         self.server: Optional[asyncio.Server] = None
         self.start_time: float = 0
         self.device_info: Dict[str, Any] = {}
         self._running = False
         self._stop_event: asyncio.Event = asyncio.Event()
+
+    def _touch_activity(self) -> None:
+        self.last_activity_time = time.time()
 
     def _resolve_signaling(self) -> SignalingProvider:
         if self.provider_name == "firebase":
@@ -52,6 +59,7 @@ class ControlDaemon:
     async def start(self, wait_timeout: float = 120.0) -> None:
         """Publishes offer, waits for device answer, establishes WebRTC, and binds IPC socket."""
         self.start_time = time.time()
+        self.last_activity_time = time.time()
         self._running = True
 
         # 1. Create WebRTC offer
@@ -86,11 +94,12 @@ class ControlDaemon:
         await self.host.wait_until_connected(timeout=20.0)
 
         # 5. Start ADB tunnel and auto-connect
-        try:
-            await self.adb_bridge.start()
-            subprocess.run(["adb", "connect", "127.0.0.1:55555"], capture_output=True)
-        except Exception:
-            pass
+        if self.device_info.get("mode") == "adb":
+            try:
+                await self.adb_bridge.start()
+                subprocess.run(["adb", "connect", "127.0.0.1:55555"], capture_output=True)
+            except Exception:
+                pass
 
         # 6. Start local IPC server
         SOCKET_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -100,13 +109,9 @@ class ControlDaemon:
         self.server = await asyncio.start_unix_server(self._handle_client, path=str(SOCKET_PATH))
         self._save_state()
 
-        # 6. TTL Monitor loop
+        # 7. Background monitors: TTL and 60s idle teardown
         asyncio.create_task(self._ttl_monitor())
-
-        # 7. Auto-renegotiate connection health monitor
-        self._was_connected = True
-        self._renegotiating = False
-        asyncio.create_task(self._connection_monitor())
+        asyncio.create_task(self._idle_monitor())
 
     def _save_state(self) -> None:
         state = {
@@ -117,6 +122,7 @@ class ControlDaemon:
             "reason": self.reason,
             "device_info": self.device_info,
             "mode": self.device_info.get("mode", "accessibility"),
+            "connected": self.host.is_ready,
             "socket": str(SOCKET_PATH),
         }
         STATE_PATH.write_text(json.dumps(state, indent=2))
@@ -130,41 +136,60 @@ class ControlDaemon:
                     break
             await asyncio.sleep(2.0)
 
-    async def _connection_monitor(self) -> None:
-        """Monitors WebRTC connection health and auto-renegotiates
-        over signaling channel with exponential backoff on loss."""
-        backoff = 2.0
+    async def _idle_monitor(self) -> None:
+        """Tears down WebRTC connection after 60s of inactivity to preserve battery."""
         while self._running:
-            await asyncio.sleep(backoff)
-            if self._renegotiating:
-                continue
-            if not self.host.is_ready and self._was_connected:
-                self._renegotiating = True
-                try:
-                    await self._auto_renegotiate()
-                    backoff = 2.0
-                except Exception:
-                    # Exponential backoff to prevent radio wakeups & battery drain
-                    backoff = min(60.0, backoff * 1.5)
-                finally:
-                    self._renegotiating = False
-            else:
-                backoff = 2.0
+            await asyncio.sleep(2.0)
+            if self.host.is_ready and (
+                time.time() - self.last_activity_time >= self.idle_timeout_seconds
+            ):
+                await self._teardown_rtc()
 
-    async def _auto_renegotiate(self) -> None:
-        """Performs automatic ICE restart / renegotiation via open signaling channel."""
+    async def _teardown_rtc(self) -> None:
+        """Cleanly tears down WebRTC connection while preserving session IPC."""
         try:
-            reneg_offer = await self.host.renegotiate_offer()
-            await self.signaling.publish_renegotiation_offer(self.session_id, reneg_offer)
-            answer_sdp = await self.signaling.wait_for_renegotiation_answer(
-                self.session_id, timeout_seconds=30.0
-            )
-            if answer_sdp:
-                await self.host.apply_answer(answer_sdp)
-                await self.host.wait_until_connected(timeout=20.0)
-                self._was_connected = True
+            await self.host.send_rpc("session.teardown", {}, timeout=2.0)
         except Exception:
             pass
+        try:
+            subprocess.run(["adb", "disconnect", "127.0.0.1:55555"], capture_output=True)
+            await self.adb_bridge.stop()
+        except Exception:
+            pass
+        await self.host.close()
+        self.host = WebRtcHost()
+        self.adb_bridge = AdbWebRtcBridge(
+            self.host, local_port=55555, on_activity=self._touch_activity
+        )
+        self._save_state()
+
+    async def _connect_on_demand(self) -> None:
+        """Wakes device app and connects WebRTC on demand."""
+        self._touch_activity()
+        offer_sdp = await self.host.create_offer()
+        offer = SessionOffer(
+            session_id=self.session_id,
+            sdp=offer_sdp,
+            reason=self.reason,
+            ttl_seconds=0,
+            timestamp_ms=int(time.time() * 1000),
+        )
+        await self.signaling.publish_offer(offer)
+        answer = await self.signaling.wait_for_answer(self.session_id, timeout_seconds=25.0)
+        if not answer or not answer.approved:
+            raise TimeoutError("On-demand wake timeout: Device did not respond.")
+        await self.host.apply_answer(answer.sdp)
+        await self.host.wait_until_connected(timeout=15.0)
+        chosen_mode = getattr(answer, "mode", self.device_info.get("mode", "accessibility"))
+        self.device_info["mode"] = chosen_mode
+        if chosen_mode == "adb":
+            try:
+                await self.adb_bridge.start()
+                subprocess.run(["adb", "connect", "127.0.0.1:55555"], capture_output=True)
+            except Exception:
+                pass
+        self._touch_activity()
+        self._save_state()
 
     async def _handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -180,6 +205,7 @@ class ControlDaemon:
             params = req.get("params", {})
             req_id = req.get("id", "req-0")
 
+            self._touch_activity()
             if method == "session.disconnect":
                 resp = RpcResponse(id=req_id, result={"ok": True, "message": "Disconnected"})
                 writer.write(resp.model_dump_json().encode("utf-8") + b"\n")
@@ -189,12 +215,20 @@ class ControlDaemon:
                 return
 
             if method == "session.status":
-                remaining = max(0, int(self.ttl_seconds - (time.time() - self.start_time)))
+                remaining = (
+                    max(0, int(self.ttl_seconds - (time.time() - self.start_time)))
+                    if self.ttl_seconds > 0
+                    else 0
+                )
+                idle_sec = int(time.time() - self.last_activity_time)
                 resp = RpcResponse(
                     id=req_id,
                     result={
                         "connected": self.host.is_ready,
+                        "state": "connected" if self.host.is_ready else "standby_idle",
                         "session_id": self.session_id,
+                        "idle_seconds": idle_sec,
+                        "idle_timeout_seconds": self.idle_timeout_seconds,
                         "remaining_ttl_seconds": remaining,
                         "reason": self.reason,
                         "device": self.device_info,
@@ -205,8 +239,13 @@ class ControlDaemon:
                 writer.close()
                 return
 
+            # On-demand connect if WebRTC was torn down during idle
+            if not self.host.is_ready:
+                await self._connect_on_demand()
+
             # Forward to phone via WebRTC DataChannel
             rpc_res = await self.host.send_rpc(method=method, params=params, timeout=20.0)
+            self._touch_activity()
             writer.write(rpc_res.model_dump_json().encode("utf-8") + b"\n")
             await writer.drain()
         except Exception as e:

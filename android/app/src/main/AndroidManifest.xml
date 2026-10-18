@@ -31,6 +31,9 @@
                     android:host="approve"
                     android:scheme="android-control" />
                 <data
+                    android:host="wake"
+                    android:scheme="android-control" />
+                <data
                     android:host="renegotiate"
                     android:scheme="android-control" />
                 <data

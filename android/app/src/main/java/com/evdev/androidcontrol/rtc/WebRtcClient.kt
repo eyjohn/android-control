@@ -34,6 +34,7 @@ class WebRtcClient(
 
     val bytesReceived = AtomicLong(0)
     val bytesTransferred = AtomicLong(0)
+    val lastTrafficTime = AtomicLong(System.currentTimeMillis())
 
     init {
         val options = PeerConnectionFactory.InitializationOptions.builder(context)
@@ -166,9 +167,22 @@ class WebRtcClient(
     }
 
     private suspend fun handleRpcMessage(channel: DataChannel, text: String) {
+        lastTrafficTime.set(System.currentTimeMillis())
         val req = try {
             json.decodeFromString<RpcRequest>(text)
         } catch (e: Exception) {
+            return
+        }
+
+        if (req.method == "session.teardown") {
+            val response = RpcResponse(id = req.id, result = kotlinx.serialization.json.buildJsonObject {
+                put("ok", kotlinx.serialization.json.JsonPrimitive(true))
+            })
+            val resJson = json.encodeToString(RpcResponse.serializer(), response)
+            val resBytes = resJson.toByteArray(StandardCharsets.UTF_8)
+            channel.send(DataChannel.Buffer(ByteBuffer.wrap(resBytes), false))
+            onStateChange("Idle (On-demand standby)")
+            close()
             return
         }
 
@@ -191,6 +205,7 @@ class WebRtcClient(
         val resBytes = resJson.toByteArray(StandardCharsets.UTF_8)
         val buffer = DataChannel.Buffer(ByteBuffer.wrap(resBytes), false)
         channel.send(buffer)
+        lastTrafficTime.set(System.currentTimeMillis())
     }
 
     private fun setupAdbDataChannel(channel: DataChannel) {
@@ -211,6 +226,7 @@ class WebRtcClient(
                 val bytes = ByteArray(buffer.data.remaining())
                 buffer.data.get(bytes)
                 bytesReceived.addAndGet(bytes.size.toLong())
+                lastTrafficTime.set(System.currentTimeMillis())
                 scope.launch(Dispatchers.IO) {
                     try {
                         val sock = getOrCreateAdbSocket()
@@ -241,6 +257,7 @@ class WebRtcClient(
                     val read = sock.getInputStream().read(buf)
                     if (read > 0) {
                         bytesTransferred.addAndGet(read.toLong())
+                        lastTrafficTime.set(System.currentTimeMillis())
                         val chunk = buf.copyOf(read)
                         val sendBuf = DataChannel.Buffer(ByteBuffer.wrap(chunk), true)
                         channel.send(sendBuf)

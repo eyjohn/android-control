@@ -32,19 +32,27 @@ class MainActivity : ComponentActivity() {
     private var rxBytes by mutableStateOf(0L)
     private var txBytes by mutableStateOf(0L)
 
+    private var approvedSessionId by mutableStateOf<String?>(null)
+    private val IDLE_TIMEOUT_MS = 60_000L
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         checkAdbStatus()
         handleIntent(intent)
 
-        // Metrics monitoring and periodic availability checks (1s tick, 3s adb check)
+        // Metrics monitoring, 60s idle teardown, and periodic availability checks
         var adbCounter = 0
         lifecycleScope.launch {
             while (isActive) {
-                rtcClient?.let {
-                    rxBytes = it.bytesReceived.get()
-                    txBytes = it.bytesTransferred.get()
+                rtcClient?.let { client ->
+                    rxBytes = client.bytesReceived.get()
+                    txBytes = client.bytesTransferred.get()
+
+                    val idleMs = System.currentTimeMillis() - client.lastTrafficTime.get()
+                    if (idleMs >= IDLE_TIMEOUT_MS) {
+                        disconnectSession(clearApproval = false)
+                    }
                 }
                 adbCounter++
                 if (adbCounter >= 3) {
@@ -76,7 +84,7 @@ class MainActivity : ComponentActivity() {
                     onLoadOffer = { loadOfferPayload(it) },
                     onApprove = { approveSession() },
                     onCopyAnswer = { copyAnswerToClipboard() },
-                    onDisconnect = { disconnectSession() },
+                    onDisconnect = { disconnectSession(clearApproval = true) },
                     isAutoDetected = !isUserModeOverride,
                     onResetAuto = {
                         isUserModeOverride = false
@@ -118,31 +126,35 @@ class MainActivity : ComponentActivity() {
     private fun handleIntent(intent: Intent?) {
         val uri: Uri? = intent?.data
         if (uri != null) {
-            val isRenegotiate = uri.host == "renegotiate" || uri.getBooleanQueryParameter("renegotiate", false)
+            val isWake = uri.host in listOf("wake", "demand", "renegotiate") ||
+                    uri.getBooleanQueryParameter("wake", false) ||
+                    uri.getBooleanQueryParameter("renegotiate", false)
             val rawData = uri.getQueryParameter("data")
                 ?: uri.getQueryParameter("offer")
                 ?: uri.getQueryParameter("sdp")
 
             if (!rawData.isNullOrBlank()) {
                 loadOfferPayload(rawData)
-                if (isRenegotiate && rtcClient != null) {
+                val offer = incomingOffer
+                if (offer != null && (isWake || offer.sessionId == approvedSessionId)) {
                     approveSession()
                 }
                 return
             }
 
-            if (uri.scheme == "android-control" && (uri.host == "approve" || uri.host == "renegotiate")) {
+            if (uri.scheme == "android-control" && (uri.host in listOf("approve", "wake", "renegotiate", "demand"))) {
                 val reason = uri.getQueryParameter("reason") ?: "AI Agent Remote Control"
-                val ttl = uri.getQueryParameter("ttl")?.toIntOrNull() ?: 600
+                val ttl = uri.getQueryParameter("ttl")?.toIntOrNull() ?: 0
                 val sdp = uri.getQueryParameter("sdp") ?: ""
+                val sessId = uri.getQueryParameter("session_id") ?: ("intent-" + System.currentTimeMillis().toString().takeLast(6))
                 incomingOffer = SessionPayload(
-                    sessionId = "intent-" + System.currentTimeMillis().toString().takeLast(6),
+                    sessionId = sessId,
                     sdp = sdp,
                     reason = reason,
                     ttlSeconds = ttl
                 )
                 sessionStatus = "Approval pending: $reason"
-                if (isRenegotiate && rtcClient != null) {
+                if (isWake || sessId == approvedSessionId) {
                     approveSession()
                 }
             }
@@ -192,6 +204,7 @@ class MainActivity : ComponentActivity() {
                     )
                     val b64 = answer.toBase64Gzip()
                     generatedAnswer = b64
+                    approvedSessionId = offer.sessionId
                     sessionStatus = "Connected! WebRTC DataChannels active."
 
                     // Write to local files dir and broadcast for automated pick-up
@@ -224,16 +237,19 @@ class MainActivity : ComponentActivity() {
         Toast.makeText(this, "Answer copied to clipboard!", Toast.LENGTH_SHORT).show()
     }
 
-    private fun disconnectSession() {
+    private fun disconnectSession(clearApproval: Boolean = false) {
         rtcClient?.close()
         rtcClient = null
-        sessionStatus = "Disconnected"
+        if (clearApproval) {
+            approvedSessionId = null
+        }
+        sessionStatus = if (approvedSessionId != null) "Idle (On-demand standby)" else "Disconnected"
         incomingOffer = null
         generatedAnswer = null
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        disconnectSession()
+        disconnectSession(clearApproval = true)
     }
 }
