@@ -22,7 +22,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Deep link approval -->
+            <!-- Deep link approval & renegotiation -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -30,6 +30,12 @@
                 <data
                     android:host="approve"
                     android:scheme="android-control" />
+                <data
+                    android:host="renegotiate"
+                    android:scheme="android-control" />
+                <data
+                    android:host="offer"
+                    android:scheme="webrtc-bridge" />
             </intent-filter>
         </activity>
 

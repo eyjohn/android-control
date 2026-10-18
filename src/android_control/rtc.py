@@ -100,6 +100,23 @@ class WebRtcHost:
 
         return self.pc.localDescription.sdp
 
+    async def renegotiate_offer(self) -> str:
+        """Generates a new SDP offer for renegotiation upon connection loss."""
+        if not self.pc or self.pc.connectionState in ["closed", "failed"]:
+            await self.close()
+            return await self.create_offer()
+
+        offer = await self.pc.createOffer()
+        await self.pc.setLocalDescription(offer)
+        for _ in range(15):
+            if self.pc.iceGatheringState == "complete":
+                break
+            await asyncio.sleep(0.1)
+
+        if not self.pc.localDescription:
+            raise RuntimeError("Failed to generate local SDP description for renegotiation")
+        return self.pc.localDescription.sdp
+
     async def apply_answer(self, answer_sdp: str) -> None:
         """Applies remote SDP answer from device and waits for DataChannel open."""
         if not self.pc:

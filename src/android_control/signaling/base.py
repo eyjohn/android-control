@@ -77,3 +77,15 @@ class SignalingProvider(abc.ABC):
     async def close_session(self, session_id: str) -> None:
         """Clean up active signaling session."""
         pass
+
+    @abc.abstractmethod
+    async def publish_renegotiation_offer(self, session_id: str, offer_sdp: str) -> None:
+        """Publish renegotiation SDP offer upon connection loss."""
+        pass
+
+    @abc.abstractmethod
+    async def wait_for_renegotiation_answer(
+        self, session_id: str, timeout_seconds: float = 30.0
+    ) -> Optional[str]:
+        """Await renegotiation SDP answer from device."""
+        pass

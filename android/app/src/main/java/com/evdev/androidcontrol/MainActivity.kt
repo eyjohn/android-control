@@ -83,16 +83,20 @@ class MainActivity : ComponentActivity() {
     private fun handleIntent(intent: Intent?) {
         val uri: Uri? = intent?.data
         if (uri != null) {
+            val isRenegotiate = uri.host == "renegotiate" || uri.getBooleanQueryParameter("renegotiate", false)
             val rawData = uri.getQueryParameter("data")
                 ?: uri.getQueryParameter("offer")
                 ?: uri.getQueryParameter("sdp")
 
             if (!rawData.isNullOrBlank()) {
                 loadOfferPayload(rawData)
+                if (isRenegotiate && rtcClient != null) {
+                    approveSession()
+                }
                 return
             }
 
-            if (uri.scheme == "android-control" && uri.host == "approve") {
+            if (uri.scheme == "android-control" && (uri.host == "approve" || uri.host == "renegotiate")) {
                 val reason = uri.getQueryParameter("reason") ?: "AI Agent Remote Control"
                 val ttl = uri.getQueryParameter("ttl")?.toIntOrNull() ?: 600
                 val sdp = uri.getQueryParameter("sdp") ?: ""
@@ -103,6 +107,9 @@ class MainActivity : ComponentActivity() {
                     ttlSeconds = ttl
                 )
                 sessionStatus = "Approval pending: $reason"
+                if (isRenegotiate && rtcClient != null) {
+                    approveSession()
+                }
             }
         }
     }
@@ -129,11 +136,13 @@ class MainActivity : ComponentActivity() {
         sessionStatus = "Connecting WebRTC ($controlMode mode)..."
         lifecycleScope.launch {
             try {
-                rtcClient = WebRtcClient(
-                    context = this@MainActivity,
-                    scope = lifecycleScope,
-                    onStateChange = { sessionStatus = it }
-                )
+                if (rtcClient == null) {
+                    rtcClient = WebRtcClient(
+                        context = this@MainActivity,
+                        scope = lifecycleScope,
+                        onStateChange = { sessionStatus = it }
+                    )
+                }
                 val answerSdp = rtcClient?.answerOffer(offer.sdp)
                 if (answerSdp != null) {
                     val answer = SessionPayload(
@@ -145,8 +154,21 @@ class MainActivity : ComponentActivity() {
                         approved = true,
                         deviceName = "Pixel 9a"
                     )
-                    generatedAnswer = answer.toBase64Gzip()
+                    val b64 = answer.toBase64Gzip()
+                    generatedAnswer = b64
                     sessionStatus = "Connected! WebRTC DataChannels active."
+
+                    // Write to local files dir and broadcast for automated pick-up
+                    try {
+                        val file = java.io.File(getExternalFilesDir(null), "answer.webrtc")
+                        file.writeText(b64)
+                    } catch (_: Exception) {}
+
+                    val bIntent = Intent("com.evdev.androidcontrol.ANSWER").apply {
+                        putExtra("answer", b64)
+                        putExtra("session_id", offer.sessionId)
+                    }
+                    sendBroadcast(bIntent)
                 }
             } catch (e: Exception) {
                 sessionStatus = "Connection error: ${e.message}"

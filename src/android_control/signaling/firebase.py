@@ -126,3 +126,27 @@ class FirebaseSignaling(SignalingProvider):
             db.reference(f"sessions/{session_id}").delete()
         except Exception:
             pass
+
+    async def publish_renegotiation_offer(self, session_id: str, offer_sdp: str) -> None:
+        if not self.is_configured:
+            return
+        from firebase_admin import db
+
+        ref = db.reference(f"sessions/{session_id}/renegotiate_offer")
+        ref.set({"sdp": offer_sdp, "timestamp_ms": int(time.time() * 1000)})
+
+    async def wait_for_renegotiation_answer(
+        self, session_id: str, timeout_seconds: float = 30.0
+    ) -> Optional[str]:
+        if not self.is_configured:
+            return None
+        from firebase_admin import db
+
+        ref = db.reference(f"sessions/{session_id}/renegotiate_answer")
+        start = time.time()
+        while time.time() - start < timeout_seconds:
+            val = ref.get()
+            if val and isinstance(val, dict):
+                return str(val.get("sdp", ""))
+            await asyncio.sleep(0.5)
+        return None

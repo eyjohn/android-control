@@ -61,3 +61,33 @@ class LocalFileSignaling(SignalingProvider):
                     f.unlink()
                 except OSError:
                     pass
+
+    async def publish_renegotiation_offer(self, session_id: str, offer_sdp: str) -> None:
+        reneg_file = self.base_dir / f"{session_id}.reneg_offer.json"
+        reneg_file.write_text(json.dumps({"session_id": session_id, "sdp": offer_sdp}))
+        Path("_scratch/session.webrtc").write_text(offer_sdp)
+
+    async def wait_for_renegotiation_answer(
+        self, session_id: str, timeout_seconds: float = 30.0
+    ) -> Optional[str]:
+        ans_file = self.base_dir / f"{session_id}.reneg_answer.json"
+        webrtc_ans = Path("_scratch/answer.webrtc")
+        start_time = time.time()
+        while time.time() - start_time < timeout_seconds:
+            if ans_file.exists():
+                try:
+                    data = json.loads(ans_file.read_text())
+                    return str(data.get("sdp", ""))
+                except Exception:
+                    pass
+            if webrtc_ans.exists():
+                try:
+                    raw = webrtc_ans.read_text().strip()
+                    if "v=0" in raw:
+                        return raw
+                    ans = SessionAnswer.from_payload(raw)
+                    return ans.sdp
+                except Exception:
+                    pass
+            await asyncio.sleep(0.2)
+        return None

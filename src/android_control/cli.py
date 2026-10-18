@@ -179,21 +179,20 @@ def status():
     """Print connection status, active driver, and device information."""
     from android_control.daemon import SOCKET_PATH
 
-    # 1. Primary: Active Accessibility WebRTC daemon session
+    # 1. Active Accessibility WebRTC daemon session
     if SOCKET_PATH.exists():
         try:
             res = run_async(client_rpc("session.status"))
             res["driver"] = "accessibility"
-            res["priority"] = "primary"
             res["transport"] = "webrtc"
             adb_bridge = AdbDriver(serial="127.0.0.1:55555")
-            res["adb_alternative_ready"] = adb_bridge.is_connected()
+            res["adb_bridge_ready"] = adb_bridge.is_connected()
             rprint(json.dumps(res, indent=2))
             return
         except Exception:
             pass
 
-    # 2. Alternative: Active WebRTC ADB bridge
+    # 2. Active WebRTC ADB bridge
     adb_webrtc = AdbDriver(serial="127.0.0.1:55555")
     if adb_webrtc.is_connected():
         pkg = adb_webrtc.get_foreground_package()
@@ -201,7 +200,6 @@ def status():
             json.dumps(
                 {
                     "driver": "adb_webrtc",
-                    "priority": "alternative",
                     "transport": "webrtc_bridge",
                     "target": "127.0.0.1:55555",
                     "connected": True,
@@ -229,7 +227,6 @@ def status():
             json.dumps(
                 {
                     "driver": "adb_direct",
-                    "priority": "standalone_fallback",
                     "transport": mode,
                     "target": serial,
                     "connected": True,

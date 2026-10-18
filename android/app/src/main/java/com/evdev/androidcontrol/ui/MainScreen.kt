@@ -97,14 +97,14 @@ fun MainScreen(
                             onClick = { onModeChange(ControlMode.ACCESSIBILITY) },
                             shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
                         ) {
-                            Text("Accessibility (Primary)", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            Text("Accessibility", fontSize = 12.sp, fontWeight = FontWeight.Medium)
                         }
                         SegmentedButton(
                             selected = controlMode == ControlMode.ADB,
                             onClick = { onModeChange(ControlMode.ADB) },
                             shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
                         ) {
-                            Text("ADB Bridge (Alt)", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            Text("ADB Bridge", fontSize = 12.sp, fontWeight = FontWeight.Medium)
                         }
                     }
                 }
@@ -137,7 +137,7 @@ fun MainScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Accessibility Service (Primary)",
+                                    text = "Accessibility Service",
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 15.sp
                                 )
@@ -193,7 +193,7 @@ fun MainScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "ADB Local Daemon (Alternative)",
+                                    text = "ADB Local Daemon",
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 15.sp
                                 )
@@ -295,9 +295,9 @@ fun MainScreen(
 
                         Text(
                             text = if (controlMode == ControlMode.ACCESSIBILITY) {
-                                "Target Mode: Accessibility (Primary)"
+                                "Mode: Accessibility"
                             } else {
-                                "Target Mode: ADB Bridge (Alternative)"
+                                "Mode: ADB Bridge"
                             },
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 13.sp,

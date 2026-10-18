@@ -101,6 +101,11 @@ class ControlDaemon:
         # 6. TTL Monitor loop
         asyncio.create_task(self._ttl_monitor())
 
+        # 7. Auto-renegotiate connection health monitor
+        self._was_connected = True
+        self._renegotiating = False
+        asyncio.create_task(self._connection_monitor())
+
     def _save_state(self) -> None:
         state = {
             "session_id": self.session_id,
@@ -120,6 +125,37 @@ class ControlDaemon:
                 await self.stop()
                 break
             await asyncio.sleep(1.0)
+
+    async def _connection_monitor(self) -> None:
+        """Monitors WebRTC connection health and auto-renegotiates
+        over signaling channel if lost."""
+        while self._running:
+            await asyncio.sleep(2.0)
+            if self._renegotiating:
+                continue
+            if not self.host.is_ready and self._was_connected:
+                self._renegotiating = True
+                try:
+                    await self._auto_renegotiate()
+                except Exception:
+                    pass
+                finally:
+                    self._renegotiating = False
+
+    async def _auto_renegotiate(self) -> None:
+        """Performs automatic ICE restart / renegotiation via open signaling channel."""
+        try:
+            reneg_offer = await self.host.renegotiate_offer()
+            await self.signaling.publish_renegotiation_offer(self.session_id, reneg_offer)
+            answer_sdp = await self.signaling.wait_for_renegotiation_answer(
+                self.session_id, timeout_seconds=30.0
+            )
+            if answer_sdp:
+                await self.host.apply_answer(answer_sdp)
+                await self.host.wait_until_connected(timeout=20.0)
+                self._was_connected = True
+        except Exception:
+            pass
 
     async def _handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter

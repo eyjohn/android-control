@@ -52,3 +52,4 @@ class SessionPayloadTest {
         assertEquals(payload.approved, decoded.approved)
     }
 }
+

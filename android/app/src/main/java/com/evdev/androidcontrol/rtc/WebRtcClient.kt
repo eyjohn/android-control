@@ -79,12 +79,20 @@ class WebRtcClient(
             override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {}
         }
 
-        peerConnection = factory?.createPeerConnection(rtcConfig, pcObserver)
-            ?: throw IllegalStateException("Failed to create PeerConnection")
+        val pc = peerConnection
+        val activePc = if (pc != null && pc.connectionState() != PeerConnection.PeerConnectionState.FAILED && pc.connectionState() != PeerConnection.PeerConnectionState.CLOSED) {
+            pc
+        } else {
+            close()
+            val newPc = factory?.createPeerConnection(rtcConfig, pcObserver)
+                ?: throw IllegalStateException("Failed to create PeerConnection")
+            peerConnection = newPc
+            newPc
+        }
 
         // 1. Set Remote Description (Offer)
         val setRemoteDeferred = CompletableDeferred<Boolean>()
-        peerConnection?.setRemoteDescription(
+        activePc.setRemoteDescription(
             object : SdpObserver {
                 override fun onCreateSuccess(desc: SessionDescription?) {}
                 override fun onSetSuccess() { setRemoteDeferred.complete(true) }
@@ -97,7 +105,7 @@ class WebRtcClient(
 
         // 2. Create Answer
         val createAnswerDeferred = CompletableDeferred<SessionDescription>()
-        peerConnection?.createAnswer(
+        activePc.createAnswer(
             object : SdpObserver {
                 override fun onCreateSuccess(desc: SessionDescription?) {
                     if (desc != null) createAnswerDeferred.complete(desc)
@@ -113,7 +121,7 @@ class WebRtcClient(
 
         // 3. Set Local Description (Answer)
         val setLocalDeferred = CompletableDeferred<Boolean>()
-        peerConnection?.setLocalDescription(
+        activePc.setLocalDescription(
             object : SdpObserver {
                 override fun onCreateSuccess(desc: SessionDescription?) {}
                 override fun onSetSuccess() { setLocalDeferred.complete(true) }
@@ -127,12 +135,12 @@ class WebRtcClient(
 
         // Wait for ICE gathering to complete (or up to 3000ms)
         val startTime = System.currentTimeMillis()
-        while (peerConnection?.iceGatheringState() != PeerConnection.IceGatheringState.COMPLETE) {
+        while (activePc.iceGatheringState() != PeerConnection.IceGatheringState.COMPLETE) {
             if (System.currentTimeMillis() - startTime > 3000) break
             kotlinx.coroutines.delay(100)
         }
 
-        val finalSdp = peerConnection?.localDescription?.description ?: answerDesc.description
+        val finalSdp = activePc.localDescription?.description ?: answerDesc.description
         onStateChange("Ready (waiting for peer)")
         return finalSdp
     }
