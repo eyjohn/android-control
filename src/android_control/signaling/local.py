@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import subprocess
 import time
 import urllib.parse
 from pathlib import Path
 from typing import Optional
 
+from android_control.adb_driver import AdbDriver
 from android_control.signaling.base import SessionAnswer, SessionOffer, SignalingProvider
 
 
@@ -17,31 +17,21 @@ class LocalFileSignaling(SignalingProvider):
     def __init__(self, base_dir: Path = Path("_scratch/signaling")):
         self.base_dir = base_dir
         self.base_dir.mkdir(parents=True, exist_ok=True)
+        self.adb = AdbDriver()
 
     def _clean_device_answer(self) -> None:
         try:
-            subprocess.run(
-                [
-                    "adb",
-                    "shell",
-                    "run-as",
-                    "com.evdev.androidcontrol",
-                    "rm",
-                    "-f",
-                    "files/answer.webrtc",
-                ],
-                capture_output=True,
+            self.adb._run_adb(
+                ["shell", "run-as", "com.evdev.androidcontrol", "rm", "-f", "files/answer.webrtc"],
                 timeout=2.0,
             )
-            subprocess.run(
+            self.adb._run_adb(
                 [
-                    "adb",
                     "shell",
                     "rm",
                     "-f",
                     "/sdcard/Android/data/com.evdev.androidcontrol/files/answer.webrtc",
                 ],
-                capture_output=True,
                 timeout=2.0,
             )
         except Exception:
@@ -49,9 +39,8 @@ class LocalFileSignaling(SignalingProvider):
 
     def _dispatch_adb_intent(self, uri: str) -> None:
         try:
-            subprocess.run(
+            self.adb._run_adb(
                 [
-                    "adb",
                     "shell",
                     "am",
                     "start",
@@ -61,7 +50,6 @@ class LocalFileSignaling(SignalingProvider):
                     uri,
                     "com.evdev.androidcontrol",
                 ],
-                capture_output=True,
                 timeout=5.0,
             )
         except Exception:
@@ -69,34 +57,32 @@ class LocalFileSignaling(SignalingProvider):
 
     def _fetch_device_answer(self) -> Optional[str]:
         try:
-            cmd = [
-                "adb",
-                "shell",
-                "run-as",
-                "com.evdev.androidcontrol",
-                "cat",
-                "files/answer.webrtc",
-            ]
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=2.0)
+            res = self.adb._run_adb(
+                ["shell", "run-as", "com.evdev.androidcontrol", "cat", "files/answer.webrtc"],
+                timeout=2.0,
+            )
             if res.returncode == 0 and res.stdout.strip():
-                content = res.stdout.strip()
-                self._clean_device_answer()
-                return content
+                content = res.stdout.decode("utf-8", errors="ignore").strip()
+                if content:
+                    self._clean_device_answer()
+                    return content
         except Exception:
             pass
 
         try:
-            cmd = [
-                "adb",
-                "shell",
-                "cat",
-                "/sdcard/Android/data/com.evdev.androidcontrol/files/answer.webrtc",
-            ]
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=2.0)
+            res = self.adb._run_adb(
+                [
+                    "shell",
+                    "cat",
+                    "/sdcard/Android/data/com.evdev.androidcontrol/files/answer.webrtc",
+                ],
+                timeout=2.0,
+            )
             if res.returncode == 0 and res.stdout.strip():
-                content = res.stdout.strip()
-                self._clean_device_answer()
-                return content
+                content = res.stdout.decode("utf-8", errors="ignore").strip()
+                if content:
+                    self._clean_device_answer()
+                    return content
         except Exception:
             pass
         return None
