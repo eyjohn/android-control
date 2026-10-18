@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_DIR="/home/john/git/android-control"
+exec uv run --project "$REPO_DIR" android-ctl "$@"
+

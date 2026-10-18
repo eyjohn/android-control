@@ -1,0 +1,28 @@
+# Binaries and build outputs
+bin/
+*.exe
+*.test
+*.out
+android/app/build/
+android/.gradle/
+.gradle/
+build/
+*.apk
+*.aab
+
+# Go
+vendor/
+
+# Scratch & IDE
+_scratch/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local secrets and configs
+firebase-credentials.json
+google-services.json
+local.properties
+.env
+
