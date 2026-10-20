@@ -23,6 +23,8 @@ class ControlAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        // F1: Ensure SessionManager is initialized and bound to the persistent AccessibilityService lifecycle
+        com.evdev.androidcontrol.session.SessionManager.getInstance(applicationContext).autoSelectBestMode()
     }
 
     override fun onDestroy() {

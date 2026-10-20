@@ -1,7 +1,7 @@
 # AGENTS.md — Development Guidelines for `android-control`
 
 ## Project Overview
-`android-control` provides zero-daemon, pure `AccessibilityService` remote control for Android devices (Pixel 9a) over an encrypted P2P WebRTC DataChannel with automated Firebase RTDB/FCM signaling.
+`android-control` provides zero-daemon, pure `AccessibilityService` remote control for Android devices (Pixel 11 Pro) over an encrypted P2P WebRTC DataChannel with automated Firebase RTDB/FCM signaling.
 
 ## Architecture Invariants
 1. **Zero Wireless Debugging**: Strictly no `adbd` over Wi-Fi / notifications. Uses native `AccessibilityService`.

@@ -6,17 +6,35 @@ import abc
 import base64
 import gzip
 import json
+import os
 from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
+
+from android_control.config import get_default_ice_servers
+
+
+def get_current_google_account() -> str:
+    from android_control.config import load_auth_session
+
+    auth = load_auth_session()
+    if auth and auth.get("email"):
+        return auth["email"]
+    if os.getenv("GOOGLE_ACCOUNT"):
+        return os.environ["GOOGLE_ACCOUNT"]
+    return "unknown"
 
 
 class SessionOffer(BaseModel):
     session_id: str
     sdp: str
-    reason: str = "AI Agent Remote Control"
+    reason: str = "Remote Control"
     ttl_seconds: int = 600
+    account: str = Field(default_factory=get_current_google_account)
+    auth_token: Optional[str] = None
     timestamp_ms: int = 0
+    mode: str = "accessibility"
+    ice_servers: list[Dict[str, Any]] = Field(default_factory=get_default_ice_servers)
     extra: Dict[str, Any] = Field(default_factory=dict)
 
     def to_payload(self) -> str:
@@ -40,8 +58,9 @@ class SessionAnswer(BaseModel):
     session_id: str
     sdp: str
     approved: bool = True
-    device_name: str = "Pixel 9a"
+    device_name: str = "Pixel 11 Pro"
     mode: str = "accessibility"
+    account: Optional[str] = None
     timestamp_ms: int = 0
 
     def to_payload(self) -> str:
@@ -63,13 +82,15 @@ class SessionAnswer(BaseModel):
 
 class SignalingProvider(abc.ABC):
     @abc.abstractmethod
-    async def publish_offer(self, offer: SessionOffer) -> None:
-        """Publish WebRTC SDP offer to signaling mailbox."""
+    async def publish_offer(
+        self, offer: SessionOffer, target_device_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Publish WebRTC SDP offer to signaling mailbox, optionally targeting a specific device."""
         pass
 
     @abc.abstractmethod
     async def wait_for_answer(
-        self, session_id: str, timeout_seconds: float = 120.0
+        self, session_id: str, timeout_seconds: float = 300.0
     ) -> Optional[SessionAnswer]:
         """Await user approval and WebRTC SDP answer from device."""
         pass

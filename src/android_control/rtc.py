@@ -14,6 +14,7 @@ from aiortc import (
     RTCSessionDescription,
 )
 
+from android_control.config import get_default_ice_servers
 from android_control.protocol import RpcRequest, RpcResponse
 
 
@@ -21,11 +22,25 @@ class WebRtcHost:
     def __init__(
         self,
         stun_servers: Optional[list[str]] = None,
+        ice_servers: Optional[list[Dict[str, Any]]] = None,
         on_state_change: Optional[Callable[[str], None]] = None,
         on_adb_data: Optional[Callable[[bytes], None]] = None,
     ):
         servers = stun_servers or ["stun:stun.l.google.com:19302"]
-        self.config = RTCConfiguration(iceServers=[RTCIceServer(urls=servers)])
+        rtc_ice_servers = [RTCIceServer(urls=servers)]
+        effective_ice = ice_servers if ice_servers is not None else get_default_ice_servers()
+        if effective_ice:
+            for s in effective_ice:
+                raw_urls = s.get("urls") or s.get("url", [])
+                urls = [raw_urls] if isinstance(raw_urls, str) else list(raw_urls)
+                rtc_ice_servers.append(
+                    RTCIceServer(
+                        urls=urls,
+                        username=s.get("username"),
+                        credential=s.get("credential") or s.get("password"),
+                    )
+                )
+        self.config = RTCConfiguration(iceServers=rtc_ice_servers)
         self.pc: Optional[RTCPeerConnection] = None
         self.channel: Optional[Any] = None
         self.adb_channel: Optional[Any] = None
@@ -48,8 +63,9 @@ class WebRtcHost:
                     self.on_state_change(state)
                 if state in ["connected", "completed"]:
                     self._connected = True
-                elif state in ["failed", "closed"]:
+                elif state in ["failed", "closed", "disconnected"]:
                     self._connected = False
+                    self._channel_open_event.clear()
 
         # 1. Control channel (JSON-RPC)
         self.channel = self.pc.createDataChannel("control", ordered=True)
@@ -127,11 +143,23 @@ class WebRtcHost:
 
     async def wait_until_connected(self, timeout: float = 30.0) -> None:
         """Wait until control DataChannel is open and ready to transmit."""
-        await asyncio.wait_for(self._channel_open_event.wait(), timeout=timeout)
+        try:
+            await asyncio.wait_for(self._channel_open_event.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            ice_state = self.pc.iceConnectionState if self.pc else "unknown"
+            conn_state = self.pc.connectionState if self.pc else "unknown"
+            raise TimeoutError(
+                f"WebRTC DataChannel handshake timed out after {timeout}s "
+                f"(ICE state: {ice_state}, connection state: {conn_state})"
+            )
 
     @property
     def is_ready(self) -> bool:
-        return self.channel is not None and self.channel.readyState == "open"
+        if not self._connected or not self.pc or not self.channel:
+            return False
+        if self.pc.connectionState in ["disconnected", "failed", "closed"]:
+            return False
+        return self.channel.readyState == "open" and self._channel_open_event.is_set()
 
     def send_adb_bytes(self, data: bytes) -> None:
         """Sends binary data chunk through ADB WebRTC DataChannel to phone."""
@@ -146,6 +174,16 @@ class WebRtcHost:
                 text = str(message)
 
             data = json.loads(text)
+            if "method" in data:
+                # Inbound request/notification from device
+                method = data.get("method")
+                if method == "session.teardown":
+                    self._connected = False
+                    self._channel_open_event.clear()
+                    if self.on_state_change:
+                        self.on_state_change("teardown_received")
+                return
+
             resp = RpcResponse.model_validate(data)
             future = self._pending_responses.pop(resp.id, None)
             if future and not future.done():

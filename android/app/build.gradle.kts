@@ -18,6 +18,43 @@ android {
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
+
+        val envFile = rootProject.file("../.env")
+        val envMap = mutableMapOf<String, String>()
+        if (envFile.exists()) {
+            envFile.forEachLine { raw ->
+                val line = raw.trim()
+                if (line.isNotEmpty() && !line.startsWith("#") && line.contains("=")) {
+                    val parts = line.split("=", limit = 2)
+                    envMap[parts[0].trim()] = parts[1].trim().trim('"', '\'')
+                }
+            }
+        }
+
+        fun requireEnv(key: String): String {
+            return (project.findProperty(key) as? String)
+                ?: System.getenv(key)
+                ?: System.getenv("ANDROID_CONTROL_$key")
+                ?: envMap[key]
+                ?: throw GradleException("Missing required configuration '$key' in .env or environment")
+        }
+
+        val fbDbUrl = requireEnv("FIREBASE_DATABASE_URL")
+        val fbApiKey = requireEnv("FIREBASE_API_KEY")
+        val fbWebClientId = requireEnv("FIREBASE_WEB_CLIENT_ID")
+
+        buildConfigField("String", "FIREBASE_DB_URL", "\"$fbDbUrl\"")
+        buildConfigField("String", "FIREBASE_API_KEY", "\"$fbApiKey\"")
+        buildConfigField("String", "FIREBASE_WEB_CLIENT_ID", "\"$fbWebClientId\"")
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
@@ -27,6 +64,7 @@ android {
         }
         debug {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 

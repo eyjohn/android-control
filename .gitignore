@@ -19,12 +19,15 @@ _scratch/
 .vscode/
 *.swp
 *.swo
+TODO.md
 
 # Local secrets and configs
 firebase-credentials.json
 google-services.json
 local.properties
 .env
+turn.json
+*.turn.json
 
 # Python
 __pycache__/

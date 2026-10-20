@@ -1,4 +1,4 @@
-.PHONY: all fmt lint test build-host build-android devcycle clean
+.PHONY: all fmt lint test build-host build-android install install-android devcycle clean
 
 all: devcycle
 
@@ -18,6 +18,12 @@ build-host:
 
 build-android:
 	cd android && ./gradlew assembleDebug
+
+install:
+	uv tool install --force .
+
+install-android:
+	adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 
 devcycle: fmt lint test build-host build-android
 	@echo "==> Devcycle complete!"

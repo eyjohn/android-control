@@ -78,7 +78,9 @@ class AdbDriver:
     def get_foreground_package(self) -> str:
         res = self._run_adb(["shell", "dumpsys", "window", "displays"])
         out = res.stdout.decode("utf-8", errors="ignore")
-        match = re.search(r"mCurrentFocus=Window\{[^\s]+ [^\s]+ ([^/]+)/", out)
+        match = re.search(
+            r"mFocusedApp=ActivityRecord\{[^\s]+ [^\s]+ ([^/\s]+)/", out
+        ) or re.search(r"mCurrentFocus=Window\{[^\s]+ [^\s]+ ([^/\s]+)/", out)
         if match:
             return match.group(1)
         return "unknown"

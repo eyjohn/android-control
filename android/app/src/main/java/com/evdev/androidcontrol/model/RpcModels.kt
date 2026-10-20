@@ -80,7 +80,7 @@ data class SessionAnswer(
     val session_id: String,
     val sdp: String,
     val approved: Boolean = true,
-    val device_name: String = "Pixel 9a",
+    val device_name: String = "Pixel 11 Pro",
     val timestamp_ms: Long = 0
 )
 

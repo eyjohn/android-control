@@ -1,95 +1,118 @@
 package com.evdev.androidcontrol
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
+import android.accounts.AccountManager
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.runtime.*
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.lifecycle.lifecycleScope
-import com.evdev.androidcontrol.model.ControlMode
-import com.evdev.androidcontrol.model.SessionPayload
-import com.evdev.androidcontrol.rtc.WebRtcClient
+import com.evdev.androidcontrol.session.SessionManager
+import com.evdev.androidcontrol.signaling.FirebaseSignalingClient
 import com.evdev.androidcontrol.ui.AndroidControlTheme
 import com.evdev.androidcontrol.ui.MainScreen
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
-    private var rtcClient: WebRtcClient? = null
-    private var sessionStatus by mutableStateOf("Idle (Waiting for request)")
-    private var controlMode by mutableStateOf(ControlMode.ACCESSIBILITY)
-    private var isUserModeOverride by mutableStateOf(false)
-    private var incomingOffer by mutableStateOf<SessionPayload?>(null)
-    private var generatedAnswer by mutableStateOf<String?>(null)
-    private var isAdbReachable by mutableStateOf<Boolean?>(null)
-    private var rxBytes by mutableStateOf(0L)
-    private var txBytes by mutableStateOf(0L)
+    private lateinit var sessionManager: SessionManager
+    private var pendingConsentEmail: String? = null
 
-    private var approvedSessionId by mutableStateOf<String?>(null)
-    private val IDLE_TIMEOUT_MS = 60_000L
+    private val accountPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            val selectedEmail = result.data?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME)
+            if (!selectedEmail.isNullOrBlank()) {
+                authenticateAndBind(selectedEmail)
+            }
+        }
+    }
+
+    private val consentLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val email = pendingConsentEmail
+        pendingConsentEmail = null
+        if (result.resultCode == Activity.RESULT_OK && !email.isNullOrBlank()) {
+            authenticateAndBind(email)
+        } else {
+            Toast.makeText(this, "Google sign-in authorization denied", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun handleLogin() {
+        @Suppress("DEPRECATION")
+        val intent = AccountManager.newChooseAccountIntent(
+            null,
+            null,
+            arrayOf("com.google"),
+            false,
+            null,
+            null,
+            null,
+            null
+        )
+        accountPickerLauncher.launch(intent)
+    }
+
+    private fun authenticateAndBind(email: String) {
+        lifecycleScope.launch {
+            when (val res = sessionManager.firebaseSignaling.authenticateAccount(email)) {
+                is FirebaseSignalingClient.AuthResult.ConsentRequired -> {
+                    pendingConsentEmail = res.email
+                    consentLauncher.launch(res.intent)
+                }
+                is FirebaseSignalingClient.AuthResult.Success -> {
+                    sessionManager.onAuthSuccess(res.email, res.firebaseToken)
+                }
+                is FirebaseSignalingClient.AuthResult.Error -> {
+                    Toast.makeText(this@MainActivity, res.message, Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        sessionManager = SessionManager.getInstance(applicationContext)
+        com.evdev.androidcontrol.service.KeepAliveService.startIfNeeded(applicationContext)
 
-        checkAdbStatus()
         handleIntent(intent)
-
-        // Metrics monitoring, 60s idle teardown, and periodic availability checks
-        var adbCounter = 0
-        lifecycleScope.launch {
-            while (isActive) {
-                rtcClient?.let { client ->
-                    rxBytes = client.bytesReceived.get()
-                    txBytes = client.bytesTransferred.get()
-
-                    val idleMs = System.currentTimeMillis() - client.lastTrafficTime.get()
-                    if (idleMs >= IDLE_TIMEOUT_MS) {
-                        disconnectSession(clearApproval = false)
-                    }
-                }
-                adbCounter++
-                if (adbCounter >= 3) {
-                    adbCounter = 0
-                    isAdbReachable = WebRtcClient.checkAdbPort("127.0.0.1", 5555)
-                }
-                if (!isUserModeOverride) {
-                    autoSelectBestMode()
-                }
-                delay(1000)
-            }
-        }
 
         setContent {
             AndroidControlTheme {
+                val currentUserEmail by sessionManager.currentUserEmail.collectAsState()
+                val sessionStatus by sessionManager.sessionStatus.collectAsState()
+                val isConnectionsEnabled by sessionManager.isConnectionsEnabled.collectAsState()
+                val controlMode by sessionManager.controlMode.collectAsState()
+                val isUserModeOverride by sessionManager.isUserModeOverride.collectAsState()
+                val isAdbReachable by sessionManager.isAdbReachable.collectAsState()
+                val isDevOptionsEnabled by sessionManager.isDevOptionsEnabled.collectAsState()
+                val rxBytes by sessionManager.rxBytes.collectAsState()
+                val txBytes by sessionManager.txBytes.collectAsState()
+
                 MainScreen(
+                    currentUserEmail = currentUserEmail,
+                    onLogin = { handleLogin() },
+                    onLogout = { sessionManager.logout() },
+                    isConnectionsEnabled = isConnectionsEnabled,
+                    onToggleConnections = { sessionManager.setConnectionsEnabled(it) },
                     controlMode = controlMode,
-                    onModeChange = {
-                        isUserModeOverride = true
-                        controlMode = it
-                    },
+                    onModeChange = { sessionManager.setControlMode(it, isManual = true) },
                     sessionStatus = sessionStatus,
-                    incomingOffer = incomingOffer,
-                    generatedAnswer = generatedAnswer,
                     isAdbReachable = isAdbReachable,
+                    isDevOptionsEnabled = isDevOptionsEnabled,
                     rxBytes = rxBytes,
                     txBytes = txBytes,
-                    onCheckAdb = { checkAdbStatus() },
-                    onLoadOffer = { loadOfferPayload(it) },
-                    onApprove = { approveSession() },
-                    onCopyAnswer = { copyAnswerToClipboard() },
-                    onDisconnect = { disconnectSession(clearApproval = true) },
+                    onDisconnect = { sessionManager.disconnectSession(clearApproval = true) },
                     isAutoDetected = !isUserModeOverride,
-                    onResetAuto = {
-                        isUserModeOverride = false
-                        autoSelectBestMode()
-                    }
+                    onResetAuto = { sessionManager.resetAutoMode() }
                 )
             }
         }
@@ -97,159 +120,21 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        checkAdbStatus()
-        autoSelectBestMode()
+        sessionManager.checkAdbStatus()
+        com.evdev.androidcontrol.service.KeepAliveService.startIfNeeded(applicationContext)
     }
 
-    private fun autoSelectBestMode() {
-        if (isUserModeOverride) return
-        val a11yReady = com.evdev.androidcontrol.service.ControlAccessibilityService.isRunning
-        val adbReady = isAdbReachable == true
-
-        if (adbReady && !a11yReady) {
-            controlMode = ControlMode.ADB
-        } else if (a11yReady && !adbReady) {
-            controlMode = ControlMode.ACCESSIBILITY
-        } else if (adbReady && a11yReady) {
-            // Both ready: prefer ADB since local wireless debugging port is listening
-            controlMode = ControlMode.ADB
-        }
-    }
-
-    private fun checkAdbStatus() {
-        lifecycleScope.launch {
-            isAdbReachable = WebRtcClient.checkAdbPort("127.0.0.1", 5555)
-            autoSelectBestMode()
-        }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
     }
 
     private fun handleIntent(intent: Intent?) {
         val uri: Uri? = intent?.data
         if (uri != null) {
-            val isWake = uri.host in listOf("wake", "demand", "renegotiate") ||
-                    uri.getBooleanQueryParameter("wake", false) ||
-                    uri.getBooleanQueryParameter("renegotiate", false)
-            val rawData = uri.getQueryParameter("data")
-                ?: uri.getQueryParameter("offer")
-                ?: uri.getQueryParameter("sdp")
-
-            if (!rawData.isNullOrBlank()) {
-                loadOfferPayload(rawData)
-                val offer = incomingOffer
-                if (offer != null && (isWake || offer.sessionId == approvedSessionId)) {
-                    approveSession()
-                }
-                return
-            }
-
-            if (uri.scheme == "android-control" && (uri.host in listOf("approve", "wake", "renegotiate", "demand"))) {
-                val reason = uri.getQueryParameter("reason") ?: "AI Agent Remote Control"
-                val ttl = uri.getQueryParameter("ttl")?.toIntOrNull() ?: 0
-                val sdp = uri.getQueryParameter("sdp") ?: ""
-                val sessId = uri.getQueryParameter("session_id") ?: ("intent-" + System.currentTimeMillis().toString().takeLast(6))
-                incomingOffer = SessionPayload(
-                    sessionId = sessId,
-                    sdp = sdp,
-                    reason = reason,
-                    ttlSeconds = ttl
-                )
-                sessionStatus = "Approval pending: $reason"
-                if (isWake || sessId == approvedSessionId) {
-                    approveSession()
-                }
-            }
+            // S5 & R7: Deep link intents are wake triggers; immediately poll RTDB for pending offers
+            sessionManager.pollNow()
         }
-    }
-
-    private fun loadOfferPayload(raw: String) {
-        val res = SessionPayload.parse(raw)
-        res.onSuccess { offer ->
-            incomingOffer = offer
-            sessionStatus = "Offer loaded: ${offer.reason} (ID: ${offer.sessionId})"
-            Toast.makeText(this, "Session offer loaded successfully", Toast.LENGTH_SHORT).show()
-        }.onFailure {
-            sessionStatus = "Error parsing offer payload: ${it.localizedMessage}"
-            Toast.makeText(this, "Failed to parse offer payload", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    private fun approveSession() {
-        val offer = incomingOffer
-        if (offer == null || offer.sdp.isBlank()) {
-            sessionStatus = "Error: Missing WebRTC Offer SDP"
-            return
-        }
-
-        sessionStatus = "Connecting WebRTC ($controlMode mode)..."
-        lifecycleScope.launch {
-            try {
-                if (rtcClient == null) {
-                    rtcClient = WebRtcClient(
-                        context = this@MainActivity,
-                        scope = lifecycleScope,
-                        onStateChange = { sessionStatus = it }
-                    )
-                }
-                val answerSdp = rtcClient?.answerOffer(offer.sdp)
-                if (answerSdp != null) {
-                    val answer = SessionPayload(
-                        sessionId = offer.sessionId,
-                        sdp = answerSdp,
-                        type = "answer",
-                        reason = offer.reason,
-                        ttlSeconds = offer.ttlSeconds,
-                        approved = true,
-                        deviceName = "Pixel 9a",
-                        mode = if (controlMode == ControlMode.ACCESSIBILITY) "accessibility" else "adb"
-                    )
-                    val b64 = answer.toBase64Gzip()
-                    generatedAnswer = b64
-                    approvedSessionId = offer.sessionId
-                    sessionStatus = "Connected! WebRTC DataChannels active."
-
-                    // Write to local files dir and broadcast for automated pick-up
-                    try {
-                        val file = java.io.File(getExternalFilesDir(null), "answer.webrtc")
-                        file.writeText(b64)
-                    } catch (_: Exception) {}
-                    try {
-                        val fileInternal = java.io.File(filesDir, "answer.webrtc")
-                        fileInternal.writeText(b64)
-                    } catch (_: Exception) {}
-
-                    val bIntent = Intent("com.evdev.androidcontrol.ANSWER").apply {
-                        putExtra("answer", b64)
-                        putExtra("session_id", offer.sessionId)
-                    }
-                    sendBroadcast(bIntent)
-                }
-            } catch (e: Exception) {
-                sessionStatus = "Connection error: ${e.message}"
-            }
-        }
-    }
-
-    private fun copyAnswerToClipboard() {
-        val ans = generatedAnswer ?: return
-        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val clip = ClipData.newPlainText("WebRTC Answer", ans)
-        clipboard.setPrimaryClip(clip)
-        Toast.makeText(this, "Answer copied to clipboard!", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun disconnectSession(clearApproval: Boolean = false) {
-        rtcClient?.close()
-        rtcClient = null
-        if (clearApproval) {
-            approvedSessionId = null
-        }
-        sessionStatus = if (approvedSessionId != null) "Idle (On-demand standby)" else "Disconnected"
-        incomingOffer = null
-        generatedAnswer = null
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        disconnectSession(clearApproval = true)
     }
 }

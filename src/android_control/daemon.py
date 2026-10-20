@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from android_control.adb_bridge import AdbWebRtcBridge
+from android_control.config import get_default_ice_servers
 from android_control.protocol import RpcError, RpcResponse
 from android_control.rtc import WebRtcHost
 from android_control.signaling.base import SessionOffer, SignalingProvider
@@ -28,16 +29,34 @@ class ControlDaemon:
         reason: str = "AI Agent Remote Control",
         ttl_seconds: int = 600,
         provider_name: str = "firebase",
+        turn_server: Optional[str] = None,
+        turn_user: Optional[str] = None,
+        turn_pass: Optional[str] = None,
+        ice_servers: Optional[list[Dict[str, Any]]] = None,
+        requested_mode: Optional[str] = None,
+        adb_port: int = 55555,
+        target_device: Optional[str] = None,
     ):
         self.reason = reason
         self.ttl_seconds = ttl_seconds
         self.provider_name = provider_name
+        self.requested_mode = requested_mode
+        self.adb_port = adb_port
+        self.target_device = target_device
+        self.target_device_info: Optional[Dict[str, Any]] = None
         self.session_id = f"sess-{uuid.uuid4().hex[:8]}"
-        self.idle_timeout_seconds: float = 60.0
+        self.idle_timeout_seconds: float = 300.0  # 5 minutes by default
         self.last_activity_time: float = time.time()
-        self.host = WebRtcHost()
+
+        self.ice_servers: list[Dict[str, Any]] = (
+            list(ice_servers)
+            if ice_servers is not None
+            else get_default_ice_servers(turn_server, turn_user, turn_pass)
+        )
+
+        self.host = WebRtcHost(ice_servers=self.ice_servers)
         self.adb_bridge = AdbWebRtcBridge(
-            self.host, local_port=55555, on_activity=self._touch_activity
+            self.host, local_port=self.adb_port, on_activity=self._touch_activity
         )
         self.signaling: SignalingProvider = self._resolve_signaling()
         self.server: Optional[asyncio.Server] = None
@@ -56,7 +75,7 @@ class ControlDaemon:
                 return fb
         return LocalFileSignaling()
 
-    async def start(self, wait_timeout: float = 120.0) -> None:
+    async def start(self, wait_timeout: float = 300.0) -> None:
         """Publishes offer, waits for device answer, establishes WebRTC, and binds IPC socket."""
         self.start_time = time.time()
         self.last_activity_time = time.time()
@@ -70,10 +89,14 @@ class ControlDaemon:
             reason=self.reason,
             ttl_seconds=self.ttl_seconds,
             timestamp_ms=int(time.time() * 1000),
+            mode=self.requested_mode or "accessibility",
+            ice_servers=self.ice_servers,
         )
 
         # 2. Publish offer
-        await self.signaling.publish_offer(offer)
+        target_dev = await self.signaling.publish_offer(offer, self.target_device)
+        if target_dev:
+            self.target_device_info = target_dev
 
         # 3. Await answer
         answer = await self.signaling.wait_for_answer(self.session_id, timeout_seconds=wait_timeout)
@@ -97,7 +120,9 @@ class ControlDaemon:
         if self.device_info.get("mode") == "adb":
             try:
                 await self.adb_bridge.start()
-                subprocess.run(["adb", "connect", "127.0.0.1:55555"], capture_output=True)
+                subprocess.run(
+                    ["adb", "connect", f"127.0.0.1:{self.adb_port}"], capture_output=True
+                )
             except Exception:
                 pass
 
@@ -109,9 +134,10 @@ class ControlDaemon:
         self.server = await asyncio.start_unix_server(self._handle_client, path=str(SOCKET_PATH))
         self._save_state()
 
-        # 7. Background monitors: TTL and 60s idle teardown
+        # 7. Background monitors: TTL, idle teardown, and liveness heartbeat
         asyncio.create_task(self._ttl_monitor())
         asyncio.create_task(self._idle_monitor())
+        asyncio.create_task(self._heartbeat_loop())
 
     def _save_state(self) -> None:
         state = {
@@ -137,13 +163,34 @@ class ControlDaemon:
             await asyncio.sleep(2.0)
 
     async def _idle_monitor(self) -> None:
-        """Tears down WebRTC connection after 60s of inactivity to preserve battery."""
+        """Tears down WebRTC connection after idle timeout to preserve battery."""
         while self._running:
             await asyncio.sleep(2.0)
-            if self.host.is_ready and (
-                time.time() - self.last_activity_time >= self.idle_timeout_seconds
+            if (
+                self.idle_timeout_seconds > 0
+                and self.host.is_ready
+                and (time.time() - self.last_activity_time >= self.idle_timeout_seconds)
             ):
                 await self._teardown_rtc()
+
+    async def _heartbeat_loop(self) -> None:
+        """Periodically ping device over WebRTC control channel when connected."""
+        failed_count = 0
+        while self._running:
+            await asyncio.sleep(10.0)
+            if self.host.is_ready:
+                try:
+                    res = await self.host.send_rpc("ping", {}, timeout=4.0)
+                    if res.error:
+                        failed_count += 1
+                    else:
+                        failed_count = 0
+                except Exception:
+                    failed_count += 1
+
+                if failed_count >= 2:
+                    failed_count = 0
+                    await self._teardown_rtc()
 
     async def _teardown_rtc(self) -> None:
         """Cleanly tears down WebRTC connection while preserving session IPC."""
@@ -152,20 +199,23 @@ class ControlDaemon:
         except Exception:
             pass
         try:
-            subprocess.run(["adb", "disconnect", "127.0.0.1:55555"], capture_output=True)
+            subprocess.run(["adb", "disconnect", f"127.0.0.1:{self.adb_port}"], capture_output=True)
             await self.adb_bridge.stop()
         except Exception:
             pass
         await self.host.close()
-        self.host = WebRtcHost()
+        self.host = WebRtcHost(ice_servers=self.ice_servers)
         self.adb_bridge = AdbWebRtcBridge(
-            self.host, local_port=55555, on_activity=self._touch_activity
+            self.host, local_port=self.adb_port, on_activity=self._touch_activity
         )
         self._save_state()
 
     async def _connect_on_demand(self) -> None:
         """Wakes device app and connects WebRTC on demand."""
         self._touch_activity()
+        # T3: Clean up previous PC before creating a new one to prevent PC leaks
+        if self.host.pc is not None:
+            await self._teardown_rtc()
         offer_sdp = await self.host.create_offer()
         offer = SessionOffer(
             session_id=self.session_id,
@@ -173,8 +223,10 @@ class ControlDaemon:
             reason=self.reason,
             ttl_seconds=0,
             timestamp_ms=int(time.time() * 1000),
+            mode=self.requested_mode or "accessibility",
+            ice_servers=self.ice_servers,
         )
-        await self.signaling.publish_offer(offer)
+        await self.signaling.publish_offer(offer, self.target_device)
         answer = await self.signaling.wait_for_answer(self.session_id, timeout_seconds=25.0)
         if not answer or not answer.approved:
             raise TimeoutError("On-demand wake timeout: Device did not respond.")
@@ -185,7 +237,9 @@ class ControlDaemon:
         if chosen_mode == "adb":
             try:
                 await self.adb_bridge.start()
-                subprocess.run(["adb", "connect", "127.0.0.1:55555"], capture_output=True)
+                subprocess.run(
+                    ["adb", "connect", f"127.0.0.1:{self.adb_port}"], capture_output=True
+                )
             except Exception:
                 pass
         self._touch_activity()

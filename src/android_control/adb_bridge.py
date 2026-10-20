@@ -47,6 +47,15 @@ class AdbWebRtcBridge:
     async def _handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
+        if self.active_writer and not self.active_writer.is_closing():
+            # A client is already active on this single ADB DataChannel stream.
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+            return
+
         self.active_writer = writer
         rprint("[bold cyan]==>[/] Local ADB client connected to 127.0.0.1 bridge.")
 

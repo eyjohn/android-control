@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-import urllib.parse
 from pathlib import Path
 from typing import Optional
 
@@ -37,18 +36,26 @@ class LocalFileSignaling(SignalingProvider):
         except Exception:
             pass
 
-    def _dispatch_adb_intent(self, uri: str) -> None:
+    def _dispatch_adb_offer(self, payload: str, session_id: str, account: str = "") -> None:
         try:
             self.adb._run_adb(
                 [
                     "shell",
                     "am",
-                    "start",
+                    "broadcast",
                     "-a",
-                    "android.intent.action.VIEW",
-                    "-d",
-                    uri,
+                    "com.evdev.androidcontrol.LOCAL_OFFER",
+                    "-p",
                     "com.evdev.androidcontrol",
+                    "--es",
+                    "data",
+                    payload,
+                    "--es",
+                    "session_id",
+                    session_id,
+                    "--es",
+                    "account",
+                    account,
                 ],
                 timeout=5.0,
             )
@@ -87,7 +94,9 @@ class LocalFileSignaling(SignalingProvider):
             pass
         return None
 
-    async def publish_offer(self, offer: SessionOffer) -> None:
+    async def publish_offer(
+        self, offer: SessionOffer, target_device_id: Optional[str] = None
+    ) -> Optional[dict]:
         offer_file = self.base_dir / f"{offer.session_id}.offer.json"
         offer_file.write_text(offer.model_dump_json(indent=2))
 
@@ -98,11 +107,11 @@ class LocalFileSignaling(SignalingProvider):
 
         # Clear any stale answers on device and dispatch intent
         self._clean_device_answer()
-        uri = f"android-control://approve?data={urllib.parse.quote(payload)}"
-        self._dispatch_adb_intent(uri)
+        self._dispatch_adb_offer(payload, offer.session_id, offer.account)
+        return {"device_id": target_device_id or "local", "device_name": "Local Device (ADB)"}
 
     async def wait_for_answer(
-        self, session_id: str, timeout_seconds: float = 120.0
+        self, session_id: str, timeout_seconds: float = 300.0
     ) -> Optional[SessionAnswer]:
         answer_file = self.base_dir / f"{session_id}.answer.json"
         webrtc_ans = Path("_scratch/answer.webrtc")
@@ -154,8 +163,7 @@ class LocalFileSignaling(SignalingProvider):
         reneg_file.write_text(json.dumps({"session_id": session_id, "sdp": offer_sdp}))
         Path("_scratch/session.webrtc").write_text(offer_sdp)
         self._clean_device_answer()
-        uri = f"android-control://renegotiate?data={urllib.parse.quote(offer_sdp)}"
-        self._dispatch_adb_intent(uri)
+        self._dispatch_adb_offer(offer_sdp, session_id)
 
     async def wait_for_renegotiation_answer(
         self, session_id: str, timeout_seconds: float = 30.0

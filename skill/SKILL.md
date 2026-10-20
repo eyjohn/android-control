@@ -1,6 +1,6 @@
 ---
 name: android-control
-description: Pure AccessibilityService remote control of Android device (Pixel 9a) over P2P WebRTC DataChannel with automated Firebase RTDB/FCM signaling.
+description: Pure AccessibilityService remote control of Android device (Pixel 11 Pro) over P2P WebRTC DataChannel with automated Firebase RTDB/FCM signaling.
 ---
 
 # Android Control Skill
