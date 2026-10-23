@@ -1,9 +1,10 @@
-"""Local TCP forwarder exposing Android adbd over WebRTC DataChannel."""
+"""Local TCP forwarder exposing Android adbd over WebRTC DataChannels with multi-socket support."""
 
 from __future__ import annotations
 
 import asyncio
-from typing import Callable, Optional
+import uuid
+from typing import Any, Callable, Optional
 
 from rich import print as rprint
 
@@ -21,22 +22,10 @@ class AdbWebRtcBridge:
         self.local_port = local_port
         self.on_activity = on_activity
         self.server: Optional[asyncio.Server] = None
-        self.active_writer: Optional[asyncio.StreamWriter] = None
-
-        # Wire incoming WebRTC binary bytes to active TCP client
-        self.host.on_adb_data = self._on_remote_bytes
-
-    def _on_remote_bytes(self, data: bytes) -> None:
-        if self.on_activity:
-            self.on_activity()
-        if self.active_writer and not self.active_writer.is_closing():
-            try:
-                self.active_writer.write(data)
-            except Exception:
-                pass
+        self.active_tasks: set[asyncio.Task[Any]] = set()
 
     async def start(self) -> None:
-        """Starts local TCP listener bridging traffic to WebRTC ADB DataChannel."""
+        """Starts local TCP listener bridging traffic to dynamic WebRTC ADB DataChannels."""
         self.server = await asyncio.start_server(
             self._handle_client,
             host="127.0.0.1",
@@ -47,45 +36,65 @@ class AdbWebRtcBridge:
     async def _handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
-        if self.active_writer and not self.active_writer.is_closing():
-            # A client is already active on this single ADB DataChannel stream.
-            writer.close()
-            try:
-                await writer.wait_closed()
-            except Exception:
-                pass
-            return
+        task = asyncio.current_task()
+        if task:
+            self.active_tasks.add(task)
+            task.add_done_callback(self.active_tasks.discard)
 
-        self.active_writer = writer
-        rprint("[bold cyan]==>[/] Local ADB client connected to 127.0.0.1 bridge.")
+        conn_id = uuid.uuid4().hex[:6]
+        rprint(f"[bold cyan]==>[/] Client [{conn_id}] connected to port {self.local_port}")
+
+        dc = self.host.create_adb_channel(conn_id)
+        dc_open_event = asyncio.Event()
+
+        @dc.on("open")
+        def on_open():
+            dc_open_event.set()
+
+        @dc.on("message")
+        def on_message(message):
+            if self.on_activity:
+                self.on_activity()
+            if not writer.is_closing():
+                data = message.encode("utf-8") if isinstance(message, str) else message
+                writer.write(data)
+
+        @dc.on("close")
+        def on_close():
+            if not writer.is_closing():
+                writer.close()
 
         try:
-            while not reader.at_eof() and not writer.is_closing():
+            # Wait briefly for dynamic DataChannel to open via DCEP
+            await asyncio.wait_for(dc_open_event.wait(), timeout=8.0)
+            while not reader.at_eof() and not writer.is_closing() and dc.readyState == "open":
                 chunk = await reader.read(16 * 1024)
                 if not chunk:
                     break
                 if self.on_activity:
                     self.on_activity()
-                self.host.send_adb_bytes(chunk)
+                dc.send(chunk)
                 await asyncio.sleep(0)
         except Exception:
             pass
         finally:
-            if self.active_writer == writer:
-                self.active_writer = None
             writer.close()
             try:
                 await writer.wait_closed()
             except Exception:
                 pass
-            rprint("[bold yellow]==>[/] Local ADB client disconnected from bridge.")
+            try:
+                dc.close()
+            except Exception:
+                pass
+            rprint(f"[bold yellow]==>[/] Local ADB client [{conn_id}] disconnected.")
 
     async def stop(self) -> None:
-        if self.active_writer:
-            self.active_writer.close()
-            self.active_writer = None
-
         if self.server:
             self.server.close()
             await self.server.wait_closed()
             self.server = None
+
+        for t in list(self.active_tasks):
+            t.cancel()
+        self.active_tasks.clear()

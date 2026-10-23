@@ -88,6 +88,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             AndroidControlTheme {
                 val currentUserEmail by sessionManager.currentUserEmail.collectAsState()
+                val isConnected by sessionManager.isConnected.collectAsState()
                 val sessionStatus by sessionManager.sessionStatus.collectAsState()
                 val isConnectionsEnabled by sessionManager.isConnectionsEnabled.collectAsState()
                 val controlMode by sessionManager.controlMode.collectAsState()
@@ -99,6 +100,7 @@ class MainActivity : ComponentActivity() {
 
                 MainScreen(
                     currentUserEmail = currentUserEmail,
+                    isConnected = isConnected,
                     onLogin = { handleLogin() },
                     onLogout = { sessionManager.logout() },
                     isConnectionsEnabled = isConnectionsEnabled,

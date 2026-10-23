@@ -8,8 +8,11 @@ from android_control.signaling.local import LocalFileSignaling
 
 
 @pytest.mark.asyncio
-async def test_local_file_signaling(tmp_path: Path):
+async def test_local_file_signaling(tmp_path: Path, monkeypatch):
     provider = LocalFileSignaling(base_dir=tmp_path)
+    monkeypatch.setattr(provider, "_dispatch_adb_offer", lambda *args, **kwargs: None)
+    monkeypatch.setattr(provider, "_fetch_device_answer", lambda *args, **kwargs: None)
+    monkeypatch.setattr(provider, "_clean_device_answer", lambda *args, **kwargs: None)
     session_id = "test-session-123"
 
     offer = SessionOffer(

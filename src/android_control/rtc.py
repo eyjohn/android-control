@@ -153,6 +153,18 @@ class WebRtcHost:
                 f"(ICE state: {ice_state}, connection state: {conn_state})"
             )
 
+    async def wait_until_adb_ready(self, timeout: float = 30.0) -> None:
+        """Wait until ADB DataChannel is open and ready to transmit."""
+        try:
+            await asyncio.wait_for(self.adb_channel_open_event.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            ice_state = self.pc.iceConnectionState if self.pc else "unknown"
+            conn_state = self.pc.connectionState if self.pc else "unknown"
+            raise TimeoutError(
+                f"WebRTC ADB DataChannel handshake timed out after {timeout}s "
+                f"(ICE state: {ice_state}, connection state: {conn_state})"
+            )
+
     @property
     def is_ready(self) -> bool:
         if not self._connected or not self.pc or not self.channel:
@@ -160,6 +172,12 @@ class WebRtcHost:
         if self.pc.connectionState in ["disconnected", "failed", "closed"]:
             return False
         return self.channel.readyState == "open" and self._channel_open_event.is_set()
+
+    def create_adb_channel(self, channel_id: str) -> Any:
+        """Dynamically creates an independent ADB DataChannel for a client connection."""
+        if not self.pc:
+            raise RuntimeError("PeerConnection not initialized")
+        return self.pc.createDataChannel(f"adb-{channel_id}", ordered=True)
 
     def send_adb_bytes(self, data: bytes) -> None:
         """Sends binary data chunk through ADB WebRTC DataChannel to phone."""

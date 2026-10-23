@@ -39,11 +39,6 @@ class WebRtcClient(
     private var activeSessionId: String? = null
     private var activeFingerprint: String? = null
 
-    private var adbSocket: Socket? = null
-    private var adbForwardJob: Job? = null
-    private var adbWriterJob: Job? = null
-    private var adbWriteChannel: Channel<ByteArray>? = null
-
     val bytesReceived = AtomicLong(0)
     val bytesTransferred = AtomicLong(0)
     val lastTrafficTime = AtomicLong(System.currentTimeMillis())
@@ -57,6 +52,7 @@ class WebRtcClient(
     }
 
     private fun postState(state: String) {
+        android.util.Log.i("WebRtcClient", "postState: $state")
         scope.launch(Dispatchers.Main.immediate) {
             onStateChange(state)
         }
@@ -134,8 +130,7 @@ class WebRtcClient(
             override fun onDataChannel(channel: DataChannel?) {
                 if (peerConnection !== createdPc) return
                 if (channel == null) return
-                if (channel.label() == "adb") {
-                    adbChannel = channel
+                if (channel.label().startsWith("adb")) {
                     setupAdbDataChannel(channel)
                 } else {
                     controlChannel = channel
@@ -334,20 +329,100 @@ class WebRtcClient(
         }
     }
 
-    // F3: Ordered, backpressured, non-redialling ADB bridge
+    // F3: Ordered, backpressured, multi-socket ADB bridge supporting concurrent/overlapping channels
     private fun setupAdbDataChannel(channel: DataChannel) {
         val writeChannel = Channel<ByteArray>(Channel.BUFFERED)
-        adbWriteChannel = writeChannel
+
+        val channelJob = scope.launch(Dispatchers.IO) {
+            var currentSocket: Socket? = null
+            var forwardJob: Job? = null
+
+            suspend fun ensureSocket(): Socket? {
+                if (currentSocket != null && !currentSocket!!.isClosed && currentSocket!!.isConnected) {
+                    return currentSocket
+                }
+                forwardJob?.cancel()
+                try {
+                    val port = adbPortResolver()
+                    val sock = Socket().apply {
+                        connect(InetSocketAddress("127.0.0.1", port), 2000)
+                    }
+                    currentSocket = sock
+                    android.util.Log.i("WebRtcClient", "Channel ${channel.label()}: connected to adbd 127.0.0.1:$port")
+
+                    forwardJob = scope.launch(Dispatchers.IO) {
+                        val buf = ByteArray(16 * 1024)
+                        val input = sock.getInputStream()
+                        try {
+                            while (isActive && channel.state() == DataChannel.State.OPEN && !sock.isClosed) {
+                                while (isActive && channel.state() == DataChannel.State.OPEN && channel.bufferedAmount() > 1_000_000L) {
+                                    delay(10)
+                                }
+                                val read = input.read(buf)
+                                if (read > 0) {
+                                    bytesTransferred.addAndGet(read.toLong())
+                                    lastTrafficTime.set(System.currentTimeMillis())
+                                    channel.send(DataChannel.Buffer(ByteBuffer.wrap(buf.copyOf(read)), true))
+                                } else {
+                                    android.util.Log.i("WebRtcClient", "Channel ${channel.label()}: adbd socket EOF")
+                                    break
+                                }
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.w("WebRtcClient", "Channel ${channel.label()}: adbd read error: ${e.message}")
+                        } finally {
+                            try { sock.close() } catch (_: Exception) {}
+                        }
+                    }
+                    return sock
+                } catch (e: Exception) {
+                    android.util.Log.e("WebRtcClient", "Channel ${channel.label()}: failed to connect to adbd: ${e.message}")
+                    return null
+                }
+            }
+
+            try {
+                for (chunk in writeChannel) {
+                    if (channel.state() != DataChannel.State.OPEN) break
+                    val isCnxn = chunk.size >= 4 &&
+                            chunk[0] == 0x43.toByte() &&
+                            chunk[1] == 0x4e.toByte() &&
+                            chunk[2] == 0x58.toByte() &&
+                            chunk[3] == 0x4e.toByte()
+                    if (isCnxn && currentSocket != null) {
+                        android.util.Log.i("WebRtcClient", "Channel ${channel.label()}: CNXN reset")
+                        try { currentSocket?.close() } catch (_: Exception) {}
+                        currentSocket = null
+                    }
+
+                    val sock = ensureSocket()
+                    if (sock != null) {
+                        try {
+                            val out = sock.getOutputStream()
+                            out.write(chunk)
+                            out.flush()
+                        } catch (e: Exception) {
+                            android.util.Log.w("WebRtcClient", "Channel ${channel.label()}: write error: ${e.message}")
+                            try { sock.close() } catch (_: Exception) {}
+                            currentSocket = null
+                        }
+                    }
+                }
+            } finally {
+                forwardJob?.cancel()
+                try { currentSocket?.close() } catch (_: Exception) {}
+            }
+        }
 
         channel.registerObserver(object : DataChannel.Observer {
             override fun onBufferedAmountChange(previousAmount: Long) {}
             override fun onStateChange() {
                 val state = channel.state()
+                android.util.Log.i("WebRtcClient", "Channel ${channel.label()} state: $state")
                 postState("ADB Bridge: $state")
-                if (state == DataChannel.State.OPEN) {
-                    startAdbBridge(channel, writeChannel)
-                } else if (state == DataChannel.State.CLOSED) {
-                    stopAdbBridge()
+                if (state == DataChannel.State.CLOSED) {
+                    writeChannel.close()
+                    channelJob.cancel()
                 }
             }
 
@@ -362,81 +437,7 @@ class WebRtcClient(
         })
     }
 
-    private fun startAdbBridge(channel: DataChannel, writeChannel: Channel<ByteArray>) {
-        stopAdbBridge()
-
-        scope.launch(Dispatchers.IO) {
-            val port = adbPortResolver()
-            val socket = try {
-                Socket().apply {
-                    connect(InetSocketAddress("127.0.0.1", port), 2000)
-                }
-            } catch (_: Exception) {
-                // Cannot reach adbd socket: close channel so host can reconnect
-                channel.close()
-                return@launch
-            }
-            adbSocket = socket
-
-            // 1. Single writer coroutine to ensure ordered writes into adbd socket
-            adbWriterJob = scope.launch(Dispatchers.IO) {
-                try {
-                    val out = socket.getOutputStream()
-                    for (chunk in writeChannel) {
-                        out.write(chunk)
-                        out.flush()
-                    }
-                } catch (_: Exception) {
-                    channel.close()
-                }
-            }
-
-            // 2. Reader coroutine with backpressure
-            adbForwardJob = scope.launch(Dispatchers.IO) {
-                val buf = ByteArray(16 * 1024)
-                val input = socket.getInputStream()
-                while (isActive && channel.state() == DataChannel.State.OPEN) {
-                    // Backpressure check: pause reading if buffer > 1MB
-                    while (isActive && channel.state() == DataChannel.State.OPEN && channel.bufferedAmount() > 1_000_000L) {
-                        delay(10)
-                    }
-                    try {
-                        val read = input.read(buf)
-                        if (read > 0) {
-                            bytesTransferred.addAndGet(read.toLong())
-                            lastTrafficTime.set(System.currentTimeMillis())
-                            val chunk = buf.copyOf(read)
-                            channel.send(DataChannel.Buffer(ByteBuffer.wrap(chunk), true))
-                        } else {
-                            // EOF: non-redialling, close channel immediately
-                            channel.close()
-                            break
-                        }
-                    } catch (_: Exception) {
-                        channel.close()
-                        break
-                    }
-                }
-                stopAdbBridge()
-            }
-        }
-    }
-
-    private fun stopAdbBridge() {
-        adbForwardJob?.cancel()
-        adbForwardJob = null
-        adbWriterJob?.cancel()
-        adbWriterJob = null
-        adbWriteChannel?.close()
-        adbWriteChannel = null
-        try {
-            adbSocket?.close()
-        } catch (_: Exception) {}
-        adbSocket = null
-    }
-
     private fun resetPeerConnection() {
-        stopAdbBridge()
         isControlChannelOpen.set(false)
         controlChannel?.dispose()
         controlChannel = null

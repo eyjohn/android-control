@@ -429,12 +429,17 @@ class SessionManager private constructor(private val context: Context) {
                                     5555
                                 }
                             },
-                            onStateChange = { _sessionStatus.value = it },
+                            onStateChange = {
+                                Log.i(TAG, "onStateChange: $it")
+                                _sessionStatus.value = it
+                            },
                             onConnectionReady = {
+                                Log.i(TAG, "onConnectionReady: session connected")
                                 _isConnected.value = true
                                 _sessionStatus.value = "Connected! WebRTC DataChannels active."
                             },
                             onClosed = {
+                                Log.i(TAG, "onClosed: session closed")
                                 // R1 & T1: Reset connection state when WebRTC closes (identity check)
                                 handleSessionClosed(client)
                             }
@@ -486,6 +491,7 @@ class SessionManager private constructor(private val context: Context) {
     // R1 & T1: Connection teardown handler with active client identity check
     private fun handleSessionClosed(client: WebRtcClient? = null) {
         if (client != null && rtcClient !== client) return
+        Log.i(TAG, "handleSessionClosed executing (previous client=$client)")
         _isConnected.value = false
         _activeSessionId.value = null
         rtcClient = null

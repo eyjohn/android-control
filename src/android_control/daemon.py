@@ -116,13 +116,11 @@ class ControlDaemon:
         await self.host.apply_answer(answer.sdp)
         await self.host.wait_until_connected(timeout=20.0)
 
-        # 5. Start ADB tunnel and auto-connect
+        # 5. Start ADB tunnel
         if self.device_info.get("mode") == "adb":
             try:
+                await self.host.wait_until_adb_ready(timeout=20.0)
                 await self.adb_bridge.start()
-                subprocess.run(
-                    ["adb", "connect", f"127.0.0.1:{self.adb_port}"], capture_output=True
-                )
             except Exception:
                 pass
 

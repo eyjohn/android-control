@@ -38,6 +38,7 @@ private fun formatBytes(bytes: Long): String {
 @Composable
 fun MainScreen(
     currentUserEmail: String?,
+    isConnected: Boolean = false,
     onLogin: () -> Unit,
     onLogout: () -> Unit,
     isConnectionsEnabled: Boolean,
@@ -66,8 +67,6 @@ fun MainScreen(
         }
     }
 
-    val isConnected = sessionStatus.contains("Connected", ignoreCase = true) ||
-            sessionStatus.contains("DataChannel active", ignoreCase = true)
     val isSelectedModeActive = if (controlMode == ControlMode.ACCESSIBILITY) {
         isA11yActive
     } else {
