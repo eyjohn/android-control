@@ -51,7 +51,7 @@ class LayoutPayload(BaseModel):
 
 class ScreenPayload(BaseModel):
     image_base64: str
-    format: str = "png"
+    format: str = "webp"
     width: int
     height: int
     annotations: Dict[str, Dict[str, Any]] = Field(default_factory=dict)

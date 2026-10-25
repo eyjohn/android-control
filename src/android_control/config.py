@@ -10,6 +10,13 @@ from typing import Any, Dict, Optional
 CONFIG_DIR = Path.home() / ".config" / "android-control"
 AUTH_FILE = CONFIG_DIR / "auth.json"
 CONFIG_FILE = CONFIG_DIR / "config.json"
+RUN_DIR = (
+    Path(os.environ["XDG_RUNTIME_DIR"]) / "android-control"
+    if "XDG_RUNTIME_DIR" in os.environ
+    else CONFIG_DIR / "run"
+)
+SOCKET_PATH = RUN_DIR / "control.sock"
+STATE_PATH = RUN_DIR / "session.json"
 
 
 def get_firebase_db_url() -> str:

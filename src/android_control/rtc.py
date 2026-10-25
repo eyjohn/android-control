@@ -83,25 +83,6 @@ class WebRtcHost:
             self._channel_open_event.clear()
             self._connected = False
 
-        # 2. ADB binary tunnel channel
-        self.adb_channel = self.pc.createDataChannel("adb", ordered=True)
-
-        @self.adb_channel.on("open")
-        def on_adb_open():
-            self.adb_channel_open_event.set()
-
-        @self.adb_channel.on("message")
-        def on_adb_message(message):
-            if self.on_adb_data:
-                if isinstance(message, str):
-                    self.on_adb_data(message.encode("utf-8"))
-                else:
-                    self.on_adb_data(message)
-
-        @self.adb_channel.on("close")
-        def on_adb_close():
-            self.adb_channel_open_event.clear()
-
         offer = await self.pc.createOffer()
         await self.pc.setLocalDescription(offer)
 

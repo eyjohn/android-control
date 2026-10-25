@@ -257,19 +257,6 @@ class WebRtcClient(
             return
         }
 
-        if (req.method == "ping") {
-            val response = RpcResponse(
-                id = req.id,
-                result = kotlinx.serialization.json.buildJsonObject {
-                    put("pong", kotlinx.serialization.json.JsonPrimitive(System.currentTimeMillis()))
-                }
-            )
-            val resJson = json.encodeToString(RpcResponse.serializer(), response)
-            val resBytes = resJson.toByteArray(StandardCharsets.UTF_8)
-            channel.send(DataChannel.Buffer(ByteBuffer.wrap(resBytes), false))
-            return
-        }
-
         if (req.method == "session.teardown") {
             val response = RpcResponse(id = req.id, result = kotlinx.serialization.json.buildJsonObject {
                 put("ok", kotlinx.serialization.json.JsonPrimitive(true))
@@ -284,10 +271,21 @@ class WebRtcClient(
 
         val service = ControlAccessibilityService.instance
         val response = if (service == null) {
-            RpcResponse(
-                id = req.id,
-                error = RpcError(code = -32001, message = "AccessibilityService is disabled on device.")
-            )
+            if (req.method == "ping") {
+                RpcResponse(
+                    id = req.id,
+                    result = kotlinx.serialization.json.buildJsonObject {
+                        put("ok", kotlinx.serialization.json.JsonPrimitive(true))
+                        put("pong", kotlinx.serialization.json.JsonPrimitive(System.currentTimeMillis()))
+                        put("a11y_enabled", kotlinx.serialization.json.JsonPrimitive(false))
+                    }
+                )
+            } else {
+                RpcResponse(
+                    id = req.id,
+                    error = RpcError(code = -32001, message = "AccessibilityService is disabled on device.")
+                )
+            }
         } else {
             try {
                 val result = service.handleRpc(req.method, req.params)
@@ -372,11 +370,13 @@ class WebRtcClient(
                             android.util.Log.w("WebRtcClient", "Channel ${channel.label()}: adbd read error: ${e.message}")
                         } finally {
                             try { sock.close() } catch (_: Exception) {}
+                            try { channel.close() } catch (_: Exception) {}
                         }
                     }
                     return sock
                 } catch (e: Exception) {
                     android.util.Log.e("WebRtcClient", "Channel ${channel.label()}: failed to connect to adbd: ${e.message}")
+                    try { channel.close() } catch (_: Exception) {}
                     return null
                 }
             }
@@ -404,6 +404,7 @@ class WebRtcClient(
                         } catch (e: Exception) {
                             android.util.Log.w("WebRtcClient", "Channel ${channel.label()}: write error: ${e.message}")
                             try { sock.close() } catch (_: Exception) {}
+                            try { channel.close() } catch (_: Exception) {}
                             currentSocket = null
                         }
                     }
@@ -411,6 +412,7 @@ class WebRtcClient(
             } finally {
                 forwardJob?.cancel()
                 try { currentSocket?.close() } catch (_: Exception) {}
+                try { channel.close() } catch (_: Exception) {}
             }
         }
 

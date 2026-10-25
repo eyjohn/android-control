@@ -190,7 +190,7 @@ class AdbDriver:
                     }
 
             buf = io.BytesIO()
-            img.save(buf, format="PNG")
+            img.save(buf, format="WEBP", quality=quality)
             final_bytes = buf.getvalue()
         else:
             final_bytes = png_bytes
@@ -198,7 +198,7 @@ class AdbDriver:
         b64 = base64.b64encode(final_bytes).decode("ascii")
         return ScreenPayload(
             image_base64=b64,
-            format="png",
+            format="webp" if annotate else "png",
             width=width,
             height=height,
             annotations=annotations,
@@ -222,11 +222,17 @@ class AdbDriver:
     def text(self, text: str, clear: bool = False, submit: bool = False) -> bool:
         if clear:
             self._run_adb(["shell", "input", "keyevent", "--longpress", "67", "67", "67"])
-        escaped = text.replace(" ", "%s").replace("&", "\\&")
-        res = self._run_adb(["shell", "input", "text", escaped])
+        if text:
+            # Escape shell special chars and whitespace for adb shell input text
+            # %s represents space in adb input text
+            special_chars = r'([&|;<>()$`"\*?~[\]!#])'
+            escaped = re.sub(special_chars, r"\\\1", text).replace(" ", "%s")
+            res = self._run_adb(["shell", "input", "text", escaped])
+            if res.returncode != 0:
+                return False
         if submit:
             self._run_adb(["shell", "input", "keyevent", "66"])
-        return res.returncode == 0
+        return True
 
     def key(self, action: str) -> bool:
         key_map = {

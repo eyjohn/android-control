@@ -68,6 +68,9 @@ class AdbWebRtcBridge:
             # Wait briefly for dynamic DataChannel to open via DCEP
             await asyncio.wait_for(dc_open_event.wait(), timeout=8.0)
             while not reader.at_eof() and not writer.is_closing() and dc.readyState == "open":
+                # Backpressure: wait if aiortc buffer has accumulated too much pending data
+                while dc.bufferedAmount > 1_000_000:
+                    await asyncio.sleep(0.01)
                 chunk = await reader.read(16 * 1024)
                 if not chunk:
                     break

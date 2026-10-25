@@ -85,10 +85,11 @@ object GestureExecutor {
             rootNode.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
         } ?: return false
 
+        val newText = if (clear && text.isEmpty()) "" else text
         val bundle = Bundle().apply {
             putCharSequence(
                 AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
-                if (clear) "" else text
+                newText
             )
         }
 
@@ -116,9 +117,15 @@ object GestureExecutor {
 
     private fun findNodeByIndex(root: AccessibilityNodeInfo, targetIndex: Int): AccessibilityNodeInfo? {
         var count = 1
+        val boundsRect = android.graphics.Rect()
         fun search(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-            val isInteractive = node.isClickable || node.isEditable || node.isScrollable
-            if (isInteractive) {
+            node.getBoundsInScreen(boundsRect)
+            val isInteractive = node.isClickable || node.isEditable || node.isScrollable ||
+                    node.isCheckable || node.isLongClickable
+            val hasContent = !node.text.isNullOrBlank() || !node.contentDescription.isNullOrBlank()
+            val hasArea = boundsRect.width() > 0 && boundsRect.height() > 0
+
+            if (hasArea && (isInteractive || hasContent)) {
                 if (count == targetIndex) return node
                 count++
             }

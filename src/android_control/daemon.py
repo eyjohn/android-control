@@ -8,19 +8,15 @@ import os
 import subprocess
 import time
 import uuid
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 from android_control.adb_bridge import AdbWebRtcBridge
-from android_control.config import get_default_ice_servers
+from android_control.config import SOCKET_PATH, STATE_PATH, get_default_ice_servers
 from android_control.protocol import RpcError, RpcResponse
 from android_control.rtc import WebRtcHost
 from android_control.signaling.base import SessionOffer, SignalingProvider
 from android_control.signaling.firebase import FirebaseSignaling
 from android_control.signaling.local import LocalFileSignaling
-
-SOCKET_PATH = Path("_scratch/control.sock")
-STATE_PATH = Path("_scratch/session.json")
 
 
 class ControlDaemon:
@@ -64,6 +60,7 @@ class ControlDaemon:
         self.device_info: Dict[str, Any] = {}
         self._running = False
         self._stop_event: asyncio.Event = asyncio.Event()
+        self._connect_lock = asyncio.Lock()
 
     def _touch_activity(self) -> None:
         self.last_activity_time = time.time()
@@ -146,6 +143,7 @@ class ControlDaemon:
             "reason": self.reason,
             "device_info": self.device_info,
             "mode": self.device_info.get("mode", "accessibility"),
+            "adb_port": self.adb_port,
             "connected": self.host.is_ready,
             "socket": str(SOCKET_PATH),
         }
@@ -210,38 +208,41 @@ class ControlDaemon:
 
     async def _connect_on_demand(self) -> None:
         """Wakes device app and connects WebRTC on demand."""
-        self._touch_activity()
-        # T3: Clean up previous PC before creating a new one to prevent PC leaks
-        if self.host.pc is not None:
-            await self._teardown_rtc()
-        offer_sdp = await self.host.create_offer()
-        offer = SessionOffer(
-            session_id=self.session_id,
-            sdp=offer_sdp,
-            reason=self.reason,
-            ttl_seconds=0,
-            timestamp_ms=int(time.time() * 1000),
-            mode=self.requested_mode or "accessibility",
-            ice_servers=self.ice_servers,
-        )
-        await self.signaling.publish_offer(offer, self.target_device)
-        answer = await self.signaling.wait_for_answer(self.session_id, timeout_seconds=25.0)
-        if not answer or not answer.approved:
-            raise TimeoutError("On-demand wake timeout: Device did not respond.")
-        await self.host.apply_answer(answer.sdp)
-        await self.host.wait_until_connected(timeout=15.0)
-        chosen_mode = getattr(answer, "mode", self.device_info.get("mode", "accessibility"))
-        self.device_info["mode"] = chosen_mode
-        if chosen_mode == "adb":
-            try:
-                await self.adb_bridge.start()
-                subprocess.run(
-                    ["adb", "connect", f"127.0.0.1:{self.adb_port}"], capture_output=True
-                )
-            except Exception:
-                pass
-        self._touch_activity()
-        self._save_state()
+        async with self._connect_lock:
+            if self.host.is_ready:
+                return
+            self._touch_activity()
+            # T3: Clean up previous PC before creating a new one to prevent PC leaks
+            if self.host.pc is not None:
+                await self._teardown_rtc()
+            offer_sdp = await self.host.create_offer()
+            offer = SessionOffer(
+                session_id=self.session_id,
+                sdp=offer_sdp,
+                reason=self.reason,
+                ttl_seconds=0,
+                timestamp_ms=int(time.time() * 1000),
+                mode=self.requested_mode or "accessibility",
+                ice_servers=self.ice_servers,
+            )
+            await self.signaling.publish_offer(offer, self.target_device)
+            answer = await self.signaling.wait_for_answer(self.session_id, timeout_seconds=25.0)
+            if not answer or not answer.approved:
+                raise TimeoutError("On-demand wake timeout: Device did not respond.")
+            await self.host.apply_answer(answer.sdp)
+            await self.host.wait_until_connected(timeout=15.0)
+            chosen_mode = getattr(answer, "mode", self.device_info.get("mode", "accessibility"))
+            self.device_info["mode"] = chosen_mode
+            if chosen_mode == "adb":
+                try:
+                    await self.adb_bridge.start()
+                    subprocess.run(
+                        ["adb", "connect", f"127.0.0.1:{self.adb_port}"], capture_output=True
+                    )
+                except Exception:
+                    pass
+            self._touch_activity()
+            self._save_state()
 
     async def _handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -318,7 +319,7 @@ class ControlDaemon:
         self._running = False
         self._stop_event.set()
         try:
-            subprocess.run(["adb", "disconnect", "127.0.0.1:55555"], capture_output=True)
+            subprocess.run(["adb", "disconnect", f"127.0.0.1:{self.adb_port}"], capture_output=True)
             await self.adb_bridge.stop()
         except Exception:
             pass

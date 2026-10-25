@@ -1,11 +1,11 @@
 ---
 name: android-control
-description: Pure AccessibilityService remote control of Android device (Pixel 11 Pro) over P2P WebRTC DataChannel with automated Firebase RTDB/FCM signaling.
+description: Pure AccessibilityService remote control of Android device over P2P WebRTC DataChannel with automated Firebase RTDB signaling.
 ---
 
 # Android Control Skill
 
-Use this skill when you need on-approval remote control of an Android phone (inspecting UI layouts, capturing screenshots, tapping, swiping, typing text, launching apps) without enabling Wireless Debugging or adbd.
+Use this skill when you need remote control of an Android phone (inspecting UI layouts, capturing screenshots, tapping, swiping, typing text, launching apps) without enabling Wireless Debugging or adbd.
 
 ## Colocated Runner
 
@@ -18,11 +18,11 @@ uv run --project /home/john/git/android-control android-ctl <subcommand>
 
 ## Common Recipes
 
-### 1. Request Phone Session (On-Approval)
+### 1. Request Phone Session
 ```bash
 scripts/android-ctl request --reason "Verify grocery order" --ttl 10m
 ```
-*Triggers native push notification on phone. Waits for user tap [Approve]. Handshakes P2P WebRTC DataChannel.*
+*Dispatches WebRTC offer via Firebase RTDB to device. Device auto-approves via matching Google Account and handshakes P2P WebRTC DataChannel.*
 
 ### 2. Check Connection Status
 ```bash

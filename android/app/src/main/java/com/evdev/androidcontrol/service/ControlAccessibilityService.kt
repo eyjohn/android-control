@@ -52,6 +52,7 @@ class ControlAccessibilityService : AccessibilityService() {
             "ping" -> {
                 buildJsonObject {
                     put("ok", true)
+                    put("pong", System.currentTimeMillis())
                     put("a11y_enabled", true)
                     put("foreground_package", root?.packageName?.toString() ?: "unknown")
                     put("screen_width", width)
@@ -149,8 +150,34 @@ class ControlAccessibilityService : AccessibilityService() {
                 }
             }
 
+            "app.list" -> {
+                val pm = packageManager
+                val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
+                    addCategory(Intent.CATEGORY_LAUNCHER)
+                }
+                val resolveInfos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    pm.queryIntentActivities(mainIntent, android.content.pm.PackageManager.ResolveInfoFlags.of(0))
+                } else {
+                    @Suppress("DEPRECATION")
+                    pm.queryIntentActivities(mainIntent, 0)
+                }
+                val packagesArray = buildJsonArray {
+                    for (info in resolveInfos) {
+                        val pkgName = info.activityInfo.packageName
+                        val label = info.loadLabel(pm).toString()
+                        add(buildJsonObject {
+                            put("package", pkgName)
+                            put("label", label)
+                        })
+                    }
+                }
+                buildJsonObject {
+                    put("packages", packagesArray)
+                }
+            }
+
             else -> {
-                buildJsonObject { put("error", "Unsupported RPC method: $method") }
+                throw IllegalArgumentException("Unsupported RPC method: $method")
             }
         }
     }

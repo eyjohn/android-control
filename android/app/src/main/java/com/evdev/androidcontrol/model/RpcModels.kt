@@ -60,27 +60,9 @@ data class AnnotationNode(
 @Serializable
 data class ScreenResponse(
     val image_base64: String,
-    val format: String = "png",
+    val format: String = "webp",
     val width: Int,
     val height: Int,
     val annotations: Map<String, AnnotationNode>
-)
-
-@Serializable
-data class SessionOffer(
-    val session_id: String,
-    val sdp: String,
-    val reason: String = "AI Agent Remote Control",
-    val ttl_seconds: Int = 600,
-    val timestamp_ms: Long = 0
-)
-
-@Serializable
-data class SessionAnswer(
-    val session_id: String,
-    val sdp: String,
-    val approved: Boolean = true,
-    val device_name: String = "Pixel 11 Pro",
-    val timestamp_ms: Long = 0
 )
 

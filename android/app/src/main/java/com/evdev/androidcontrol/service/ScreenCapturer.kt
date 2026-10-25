@@ -79,6 +79,9 @@ object ScreenCapturer {
                 style = Paint.Style.FILL
             }
 
+            val textBounds = Rect()
+            textPaint.getTextBounds("#99", 0, 3, textBounds)
+            val badgeH = textBounds.height() + 14
             for (elem in layout.elements) {
                 val b = elem.bounds
                 if (b.size == 4) {
@@ -86,17 +89,16 @@ object ScreenCapturer {
                     canvas.drawRect(rect, boxPaint)
 
                     val label = "#${elem.index}"
-                    val textBounds = Rect()
                     textPaint.getTextBounds(label, 0, label.length, textBounds)
+                    val badgeW = textBounds.width() + 16
 
-                    val badgeRect = Rect(
-                        b[0],
-                        b[1] - textBounds.height() - 10,
-                        b[0] + textBounds.width() + 16,
-                        b[1]
-                    )
+                    val topBadge = (b[1] - badgeH).coerceAtLeast(0)
+                    val bottomBadge = (topBadge + badgeH).coerceAtMost(height)
+                    val rightBadge = (b[0] + badgeW).coerceAtMost(width)
+
+                    val badgeRect = Rect(b[0], topBadge, rightBadge, bottomBadge)
                     canvas.drawRect(badgeRect, badgeBgPaint)
-                    canvas.drawText(label, (b[0] + 8).toFloat(), (b[1] - 6).toFloat(), textPaint)
+                    canvas.drawText(label, (b[0] + 8).toFloat(), (bottomBadge - 6).toFloat(), textPaint)
 
                     annotations[elem.index.toString()] = AnnotationNode(
                         center = elem.center,
@@ -107,7 +109,13 @@ object ScreenCapturer {
         }
 
         val outputStream = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.PNG, quality, outputStream)
+        val format = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Bitmap.CompressFormat.WEBP_LOSSY
+        } else {
+            @Suppress("DEPRECATION")
+            Bitmap.CompressFormat.WEBP
+        }
+        bitmap.compress(format, quality.coerceIn(10, 100), outputStream)
         val imageBytes = outputStream.toByteArray()
         bitmap.recycle()
 
@@ -115,7 +123,7 @@ object ScreenCapturer {
 
         return ScreenResponse(
             image_base64 = base64String,
-            format = "png",
+            format = "webp",
             width = width,
             height = height,
             annotations = annotations

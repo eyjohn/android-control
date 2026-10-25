@@ -15,6 +15,7 @@ from rich import print as rprint
 from rich.console import Console
 
 from android_control.adb_driver import AdbDriver
+from android_control.config import SOCKET_PATH, STATE_PATH
 from android_control.daemon import ControlDaemon, client_rpc
 from android_control.protocol import (
     UiElement,
@@ -93,8 +94,6 @@ def run_async(coro):
 def get_backend(driver: Optional[str] = None):
     """Prioritizes the control method decided by the Android control app in response to request;
     falls back to standalone if no active session."""
-    from android_control.daemon import SOCKET_PATH, STATE_PATH
-
     if driver == "a11y":
         return "daemon"
     if driver == "adb":
@@ -106,8 +105,9 @@ def get_backend(driver: Optional[str] = None):
             try:
                 state = json.loads(STATE_PATH.read_text())
                 chosen = state.get("device_info", {}).get("mode", state.get("mode"))
+                adb_port = state.get("adb_port", 55555)
                 if chosen == "adb":
-                    adb_webrtc = AdbDriver(serial="127.0.0.1:55555")
+                    adb_webrtc = AdbDriver(serial=f"127.0.0.1:{adb_port}")
                     if adb_webrtc.is_connected():
                         return "adb"
                 return "daemon"
@@ -713,26 +713,24 @@ def proxy_alias(
 @app.command()
 def status():
     """Print connection status, active driver, and device information."""
-    from android_control.daemon import SOCKET_PATH
-
     # 1. Active WebRTC daemon session
     if SOCKET_PATH.exists():
         try:
             res = run_async(client_rpc("session.status"))
-            from android_control.daemon import STATE_PATH
-
             chosen = "accessibility"
+            adb_port = 55555
             if STATE_PATH.exists():
                 try:
                     st = json.loads(STATE_PATH.read_text())
                     chosen = st.get("device_info", {}).get("mode", st.get("mode", "accessibility"))
+                    adb_port = st.get("adb_port", 55555)
                 except Exception:
                     pass
 
             res["driver"] = chosen
             res["decided_by"] = "control_app"
             res["transport"] = "webrtc"
-            adb_bridge = AdbDriver(serial="127.0.0.1:55555")
+            adb_bridge = AdbDriver(serial=f"127.0.0.1:{adb_port}")
             res["adb_bridge_ready"] = adb_bridge.is_connected()
             rprint(json.dumps(res, indent=2))
             return
