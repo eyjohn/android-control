@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Android Control</string>
+    <string name="app_name">DroidCtl</string>
     <string name="accessibility_service_description">Enables on-approval remote control, silent screenshot capture, and UI inspection for personal AI assistant Eva.</string>
 </resources>
 
