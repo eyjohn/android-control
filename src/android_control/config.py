@@ -17,6 +17,22 @@ RUN_DIR = (
 )
 SOCKET_PATH = RUN_DIR / "control.sock"
 STATE_PATH = RUN_DIR / "session.json"
+CACHE_DIR = (
+    Path(os.environ["XDG_CACHE_HOME"]) / "android-control"
+    if "XDG_CACHE_HOME" in os.environ
+    else Path.home() / ".cache" / "android-control"
+)
+DEFAULT_SCRATCH_DIR = (
+    Path(os.environ["ANDROID_CONTROL_SCRATCH"])
+    if "ANDROID_CONTROL_SCRATCH" in os.environ
+    else CACHE_DIR
+)
+
+
+def get_default_scratch_path(filename: str) -> Path:
+    """Returns a file path inside the default runtime/cache scratch directory."""
+    DEFAULT_SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
+    return DEFAULT_SCRATCH_DIR / filename
 
 
 def get_firebase_db_url() -> str:

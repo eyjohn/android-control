@@ -122,9 +122,9 @@ class SessionManager private constructor(private val context: Context) {
     }
 
     private fun updateKeepAliveService() {
-        // R5: Start foreground service when A11y is inactive and connections are enabled
-        if (_isConnectionsEnabled.value && !ControlAccessibilityService.isRunning) {
+        if (_isConnectionsEnabled.value) {
             KeepAliveService.startIfNeeded(context)
+            KeepAliveService.updateNotification(context, isConnected = _isConnected.value, mode = _controlMode.value.name)
         } else {
             KeepAliveService.stopIfRunning(context)
         }
@@ -437,11 +437,13 @@ class SessionManager private constructor(private val context: Context) {
                                 Log.i(TAG, "onConnectionReady: session connected")
                                 _isConnected.value = true
                                 _sessionStatus.value = "Connected! WebRTC DataChannels active."
+                                KeepAliveService.updateNotification(context, isConnected = true, mode = _controlMode.value.name)
                             },
                             onClosed = {
                                 Log.i(TAG, "onClosed: session closed")
                                 // R1 & T1: Reset connection state when WebRTC closes (identity check)
                                 handleSessionClosed(client)
+                                KeepAliveService.updateNotification(context, isConnected = false)
                             }
                         )
                         rtcClient = client

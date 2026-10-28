@@ -220,61 +220,55 @@ class FirebaseSignaling(SignalingProvider):
         target_uid = (target_dev.get("uid") if target_dev else None) or uid
 
         # 1. Clear stale answer & write session offer to Firebase RTDB
-        rtdb_tasks = []
+        rtdb_tasks = [
+            asyncio.to_thread(
+                self._rtdb_request,
+                "DELETE",
+                f"/android_control/sessions/{offer.session_id}/answer.json",
+            ),
+            asyncio.to_thread(
+                self._rtdb_request,
+                "PUT",
+                f"/android_control/sessions/{offer.session_id}/offer.json",
+                payload_dict,
+            ),
+        ]
         if target_uid:
-            rtdb_tasks.append(
-                asyncio.to_thread(
-                    self._rtdb_request,
-                    "DELETE",
-                    f"/users/{target_uid}/sessions/{offer.session_id}/answer.json",
-                )
-            )
-            rtdb_tasks.append(
-                asyncio.to_thread(
-                    self._rtdb_request,
-                    "PUT",
-                    f"/users/{target_uid}/sessions/{offer.session_id}/offer.json",
-                    payload_dict,
-                )
-            )
-        else:
-            rtdb_tasks.append(
-                asyncio.to_thread(
-                    self._rtdb_request,
-                    "DELETE",
-                    f"/android_control/sessions/{offer.session_id}/answer.json",
-                )
-            )
-            rtdb_tasks.append(
-                asyncio.to_thread(
-                    self._rtdb_request,
-                    "PUT",
-                    f"/android_control/sessions/{offer.session_id}/offer.json",
-                    payload_dict,
-                )
+            rtdb_tasks.extend(
+                [
+                    asyncio.to_thread(
+                        self._rtdb_request,
+                        "DELETE",
+                        f"/users/{target_uid}/sessions/{offer.session_id}/answer.json",
+                    ),
+                    asyncio.to_thread(
+                        self._rtdb_request,
+                        "PUT",
+                        f"/users/{target_uid}/sessions/{offer.session_id}/offer.json",
+                        payload_dict,
+                    ),
+                ]
             )
         await asyncio.gather(*rtdb_tasks, return_exceptions=True)
 
-        # 2. Deliver to target device inbox ONLY
+        # 2. Deliver to target device inbox (publish to active /android_control & /users paths)
         delivered_to_rtdb = False
         dev_id = target_dev.get("device_id") if target_dev else target_device_id
         if dev_id:
-            inbox_tasks = []
+            inbox_tasks = [
+                asyncio.to_thread(
+                    self._rtdb_request,
+                    "PUT",
+                    f"/android_control/devices/{dev_id}/inbox.json",
+                    payload_dict,
+                )
+            ]
             if target_uid:
                 inbox_tasks.append(
                     asyncio.to_thread(
                         self._rtdb_request,
                         "PUT",
                         f"/users/{target_uid}/devices/{dev_id}/inbox.json",
-                        payload_dict,
-                    )
-                )
-            else:
-                inbox_tasks.append(
-                    asyncio.to_thread(
-                        self._rtdb_request,
-                        "PUT",
-                        f"/android_control/devices/{dev_id}/inbox.json",
                         payload_dict,
                     )
                 )
@@ -336,21 +330,21 @@ class FirebaseSignaling(SignalingProvider):
 
     async def close_session(self, session_id: str) -> None:
         _, _, _, uid = get_active_credentials()
+        try:
+            await asyncio.to_thread(
+                self._rtdb_request,
+                "DELETE",
+                f"/android_control/sessions/{session_id}.json",
+            )
+        except Exception:
+            pass
+
         if uid:
             try:
                 await asyncio.to_thread(
                     self._rtdb_request,
                     "DELETE",
                     f"/users/{uid}/sessions/{session_id}.json",
-                )
-            except Exception:
-                pass
-        else:
-            try:
-                await asyncio.to_thread(
-                    self._rtdb_request,
-                    "DELETE",
-                    f"/android_control/sessions/{session_id}.json",
                 )
             except Exception:
                 pass

@@ -9,12 +9,13 @@ from pathlib import Path
 from typing import Optional
 
 from android_control.adb_driver import AdbDriver
+from android_control.config import get_default_scratch_path
 from android_control.signaling.base import SessionAnswer, SessionOffer, SignalingProvider
 
 
 class LocalFileSignaling(SignalingProvider):
-    def __init__(self, base_dir: Path = Path("_scratch/signaling")):
-        self.base_dir = base_dir
+    def __init__(self, base_dir: Optional[Path] = None):
+        self.base_dir = base_dir or get_default_scratch_path("signaling")
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.adb = AdbDriver()
 
@@ -101,7 +102,7 @@ class LocalFileSignaling(SignalingProvider):
         offer_file.write_text(offer.model_dump_json(indent=2))
 
         # Also write session.webrtc for out-of-band / webrtc-bridge pairing
-        webrtc_file = Path("_scratch/session.webrtc")
+        webrtc_file = get_default_scratch_path("session.webrtc")
         payload = offer.to_payload()
         webrtc_file.write_text(payload)
 
@@ -114,7 +115,7 @@ class LocalFileSignaling(SignalingProvider):
         self, session_id: str, timeout_seconds: float = 300.0
     ) -> Optional[SessionAnswer]:
         answer_file = self.base_dir / f"{session_id}.answer.json"
-        webrtc_ans = Path("_scratch/answer.webrtc")
+        webrtc_ans = get_default_scratch_path("answer.webrtc")
         start_time = time.time()
         while time.time() - start_time < timeout_seconds:
             if answer_file.exists():
@@ -151,7 +152,10 @@ class LocalFileSignaling(SignalingProvider):
                     path.unlink()
                 except OSError:
                     pass
-        for f in [Path("_scratch/session.webrtc"), Path("_scratch/answer.webrtc")]:
+        for f in [
+            get_default_scratch_path("session.webrtc"),
+            get_default_scratch_path("answer.webrtc"),
+        ]:
             if f.exists():
                 try:
                     f.unlink()
@@ -161,7 +165,7 @@ class LocalFileSignaling(SignalingProvider):
     async def publish_renegotiation_offer(self, session_id: str, offer_sdp: str) -> None:
         reneg_file = self.base_dir / f"{session_id}.reneg_offer.json"
         reneg_file.write_text(json.dumps({"session_id": session_id, "sdp": offer_sdp}))
-        Path("_scratch/session.webrtc").write_text(offer_sdp)
+        get_default_scratch_path("session.webrtc").write_text(offer_sdp)
         self._clean_device_answer()
         self._dispatch_adb_offer(offer_sdp, session_id)
 
@@ -169,7 +173,7 @@ class LocalFileSignaling(SignalingProvider):
         self, session_id: str, timeout_seconds: float = 30.0
     ) -> Optional[str]:
         ans_file = self.base_dir / f"{session_id}.reneg_answer.json"
-        webrtc_ans = Path("_scratch/answer.webrtc")
+        webrtc_ans = get_default_scratch_path("answer.webrtc")
         start_time = time.time()
         while time.time() - start_time < timeout_seconds:
             if ans_file.exists():

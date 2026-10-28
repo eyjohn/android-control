@@ -1,0 +1,32 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- Monochrome remote control phone silhouette + signal waves for status bar -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M 16,1 L 8,1 C 6.9,1 6,1.9 6,3 L 6,21 C 6,22.1 6.9,23 8,23 L 16,23 C 17.1,23 18,22.1 18,21 L 18,3 C 18,1.9 17.1,1 16,1 Z M 16,19 L 8,19 L 8,5 L 16,5 L 16,19 Z" />
+
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M 12,20.5 A 1,1 0 1,0 12,22.5 A 1,1 0 1,0 12,20.5 Z" />
+
+    <!-- Wireless remote dot / signal badge in center of screen -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M 12,9 A 1.5,1.5 0 1,0 12,12 A 1.5,1.5 0 1,0 12,9 Z" />
+
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:pathData="M 9.5,7.5 A 3.5,3.5 0 0,1 14.5,7.5" />
+
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:pathData="M 8.5,13.5 A 4,4 0 0,0 15.5,13.5" />
+</vector>

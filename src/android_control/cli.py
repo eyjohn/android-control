@@ -15,7 +15,7 @@ from rich import print as rprint
 from rich.console import Console
 
 from android_control.adb_driver import AdbDriver
-from android_control.config import SOCKET_PATH, STATE_PATH
+from android_control.config import SOCKET_PATH, STATE_PATH, get_default_scratch_path
 from android_control.daemon import ControlDaemon, client_rpc
 from android_control.protocol import (
     UiElement,
@@ -166,7 +166,7 @@ def wifi(
 @app.command()
 def offer(
     out: Path = typer.Option(
-        Path("_scratch/session.webrtc"), "--out", "-o", help="Target session offer file"
+        None, "--out", "-o", help="Target session offer file (defaults to temporary scratch)"
     ),
     reason: str = typer.Option(
         "AI Agent Remote Control", "--reason", "-r", help="Reason for session"
@@ -188,6 +188,7 @@ def offer(
     from android_control.rtc import WebRtcHost
     from android_control.signaling.base import SessionOffer
 
+    target_out = out or get_default_scratch_path("session.webrtc")
     ice_servers = get_default_ice_servers(turn_server, turn_user, turn_pass)
 
     host = WebRtcHost(ice_servers=ice_servers)
@@ -202,9 +203,9 @@ def offer(
         ice_servers=ice_servers,
     )
     payload = sess_offer.to_payload()
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(payload)
-    rprint(f"[bold green]✔ Generated session offer:[/] {out}")
+    target_out.parent.mkdir(parents=True, exist_ok=True)
+    target_out.write_text(payload)
+    rprint(f"[bold green]✔ Generated session offer:[/] {target_out}")
     rprint(f"[bold cyan]Payload:[/] {payload[:60]}... ({len(payload)} bytes)")
     rprint(f"[bold cyan]Deep link:[/] android-control://approve?data={payload}")
 
@@ -213,13 +214,14 @@ def offer(
 def answer(
     payload: str = typer.Argument(..., help="Answer payload copied from phone app"),
     out: Path = typer.Option(
-        Path("_scratch/answer.webrtc"), "--out", "-o", help="Target answer file"
+        None, "--out", "-o", help="Target answer file (defaults to temporary scratch)"
     ),
 ):
     """Save answer payload copied from phone app to complete out-of-band WebRTC handshake."""
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(payload.strip())
-    rprint(f"[bold green]✔ Saved answer payload to {out}[/]")
+    target_out = out or get_default_scratch_path("answer.webrtc")
+    target_out.parent.mkdir(parents=True, exist_ok=True)
+    target_out.write_text(payload.strip())
+    rprint(f"[bold green]✔ Saved answer payload to {target_out}[/]")
 
 
 @devices_app.callback(invoke_without_command=True)
@@ -799,7 +801,7 @@ def layout(
         else:
             res = run_async(client_rpc("layout", {"flat": flat, "full": full}))
 
-        cache_path = Path("_scratch/last_layout.json")
+        cache_path = get_default_scratch_path("last_layout.json")
 
         if diff and cache_path.exists():
             try:
@@ -829,7 +831,7 @@ def layout(
 
 
 def do_screen_capture(
-    output: Path = Path("_scratch/screen.png"),
+    output: Optional[Path] = None,
     annotate: bool = True,
     quality: int = 80,
 ) -> None:
@@ -838,6 +840,7 @@ def do_screen_capture(
         rprint("[bold red]Error:[/] No active WebRTC session or connected ADB device.")
         sys.exit(1)
 
+    target_output = output or get_default_scratch_path("screen.png")
     try:
         if backend == "adb":
             res = _get_active_adb_driver().screen(annotate=annotate, quality=quality).model_dump()
@@ -849,10 +852,10 @@ def do_screen_capture(
             raise RuntimeError("No image data returned from device")
 
         img_bytes = base64.b64decode(img_b64)
-        output.parent.mkdir(parents=True, exist_ok=True)
+        target_output.parent.mkdir(parents=True, exist_ok=True)
 
         img_format = res.get("format", "").lower()
-        if output.suffix.lower() == ".png" and img_format in ("webp", "webp_lossy"):
+        if target_output.suffix.lower() == ".png" and img_format in ("webp", "webp_lossy"):
             # Convert WEBP bytes to standard PNG to match file extension
             import io
 
@@ -863,14 +866,14 @@ def do_screen_capture(
                 pil_img.save(buf, format="PNG")
                 img_bytes = buf.getvalue()
 
-        output.write_bytes(img_bytes)
+        target_output.write_bytes(img_bytes)
 
         # Save annotation map alongside image
-        map_path = output.with_suffix(output.suffix + ".map.json")
+        map_path = target_output.with_suffix(target_output.suffix + ".map.json")
         annotations = res.get("annotations", {})
         map_path.write_text(json.dumps(annotations, indent=2))
 
-        rprint(f"[bold green]✔ Screenshot saved:[/] {output} ({len(img_bytes)} bytes)")
+        rprint(f"[bold green]✔ Screenshot saved:[/] {target_output} ({len(img_bytes)} bytes)")
         rprint(f"[bold green]✔ Annotation map saved:[/] {map_path} ({len(annotations)} elements)")
     except Exception as e:
         rprint(f"[bold red]Error:[/] {e}")
@@ -878,10 +881,11 @@ def do_screen_capture(
 
 
 def do_screen_resolve(
-    screen_path: Path = Path("_scratch/screen.png"),
+    screen_path: Optional[Path] = None,
     string: str = "",
 ) -> None:
-    map_path = screen_path.with_suffix(screen_path.suffix + ".map.json")
+    target_path = screen_path or get_default_scratch_path("screen.png")
+    map_path = target_path.with_suffix(target_path.suffix + ".map.json")
     if not map_path.exists():
         rprint(f"[bold red]Error:[/] Map file {map_path} not found.")
         sys.exit(1)
@@ -909,8 +913,8 @@ def do_screen_resolve(
 @screen_app.callback(invoke_without_command=True)
 def screen_main(
     ctx: typer.Context,
-    output: Path = typer.Option(
-        Path("_scratch/screen.png"), "-o", "--output", help="Path to save screenshot PNG"
+    output: Optional[Path] = typer.Option(
+        None, "-o", "--output", help="Path to save screenshot PNG (defaults to temporary scratch)"
     ),
     annotate: bool = typer.Option(
         True, "--annotate/--no-annotate", help="Draw #N numbered bounding boxes"
@@ -924,8 +928,8 @@ def screen_main(
 
 @screen_app.command("capture")
 def screen_capture(
-    output: Path = typer.Option(
-        Path("_scratch/screen.png"), "-o", "--output", help="Path to save screenshot PNG"
+    output: Optional[Path] = typer.Option(
+        None, "-o", "--output", help="Path to save screenshot PNG (defaults to temporary scratch)"
     ),
     annotate: bool = typer.Option(
         True, "--annotate/--no-annotate", help="Draw #N numbered bounding boxes"
@@ -938,8 +942,8 @@ def screen_capture(
 
 @screen_app.command("resolve")
 def screen_resolve(
-    screen_path: Path = typer.Option(
-        Path("_scratch/screen.png"), "--screen", "--screenshot", help="Screenshot path"
+    screen_path: Optional[Path] = typer.Option(
+        None, "--screen", "--screenshot", help="Screenshot path (defaults to temporary scratch)"
     ),
     string: str = typer.Option(..., "--string", "-s", help="Query string, e.g. 'tap #14'"),
 ):
@@ -949,8 +953,8 @@ def screen_resolve(
 
 @app.command()
 def resolve(
-    screen_path: Path = typer.Option(
-        Path("_scratch/screen.png"), "--screen", "--screenshot", help="Screenshot path"
+    screen_path: Optional[Path] = typer.Option(
+        None, "--screen", "--screenshot", help="Screenshot path (defaults to temporary scratch)"
     ),
     string: str = typer.Option(..., "--string", "-s", help="Query string, e.g. 'tap #14'"),
 ):
@@ -1113,12 +1117,22 @@ def tap(
         if backend == "adb":
             adb = _get_active_adb_driver()
             if node is not None:
-                map_path = Path("_scratch/screen.png.map.json")
-                if map_path.exists():
-                    annotations = json.loads(map_path.read_text())
-                    coords = resolve_node_target(str(node), annotations)
-                    if coords:
-                        x, y = coords[0], coords[1]
+                # First check user-specified or cwd screenshot map, then default scratch map
+                map_candidates = [
+                    Path("screen.png.map.json"),
+                    get_default_scratch_path("screen.png.map.json"),
+                    Path("_scratch/screen.png.map.json"),
+                ]
+                for map_path in map_candidates:
+                    if map_path.exists():
+                        try:
+                            annotations = json.loads(map_path.read_text())
+                            coords = resolve_node_target(str(node), annotations)
+                            if coords:
+                                x, y = coords[0], coords[1]
+                                break
+                        except Exception:
+                            pass
                 if x is None or y is None:
                     layout_data = adb.layout()
                     elem = next((e for e in layout_data.elements if e.index == node), None)
@@ -1219,12 +1233,21 @@ def text(
             adb = _get_active_adb_driver()
             if node is not None:
                 # Tap node first to focus
-                map_path = Path("_scratch/screen.png.map.json")
-                if map_path.exists():
-                    annotations = json.loads(map_path.read_text())
-                    coords = resolve_node_target(str(node), annotations)
-                    if coords:
-                        adb.tap(coords[0], coords[1])
+                map_candidates = [
+                    Path("screen.png.map.json"),
+                    get_default_scratch_path("screen.png.map.json"),
+                    Path("_scratch/screen.png.map.json"),
+                ]
+                for map_path in map_candidates:
+                    if map_path.exists():
+                        try:
+                            annotations = json.loads(map_path.read_text())
+                            coords = resolve_node_target(str(node), annotations)
+                            if coords:
+                                adb.tap(coords[0], coords[1])
+                                break
+                        except Exception:
+                            pass
             success = adb.text(content, clear=clear, submit=submit)
             rprint(f"[bold green]✔ Entered text:[/] ok={success}")
         else:
