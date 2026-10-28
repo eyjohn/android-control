@@ -387,16 +387,17 @@ class FirebaseSignalingClient(private val context: Context) {
                         explicitToken = explicitToken
                     )
                     success = resUser.isSuccess
+                } else {
+                    // 2. Global path (fallback only when unauthenticated UID is absent)
+                    val resGlobal = httpRequest(
+                        method = "PUT",
+                        path = "/android_control/devices/$deviceId.json",
+                        body = payload,
+                        explicitToken = explicitToken
+                    )
+                    success = resGlobal.isSuccess
                 }
-
-                // 2. Global path (backward-compatibility fallback)
-                val resGlobal = httpRequest(
-                    method = "PUT",
-                    path = "/android_control/devices/$deviceId.json",
-                    body = payload,
-                    explicitToken = explicitToken
-                )
-                success || resGlobal.isSuccess
+                success
             }.getOrDefault(false)
         }
 
@@ -483,14 +484,16 @@ class FirebaseSignalingClient(private val context: Context) {
                         explicitToken = explicitToken
                     )
                     ok = resUser.isSuccess
+                } else {
+                    val resGlobal = httpRequest(
+                        method = "PUT",
+                        path = "/android_control/sessions/${answer.sessionId}/answer.json",
+                        body = answer.toJson(),
+                        explicitToken = explicitToken
+                    )
+                    ok = resGlobal.isSuccess
                 }
-                val resGlobal = httpRequest(
-                    method = "PUT",
-                    path = "/android_control/sessions/${answer.sessionId}/answer.json",
-                    body = answer.toJson(),
-                    explicitToken = explicitToken
-                )
-                ok || resGlobal.isSuccess
+                ok
             }.getOrDefault(false)
         }
 }

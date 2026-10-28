@@ -85,7 +85,14 @@ object GestureExecutor {
             rootNode.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
         } ?: return false
 
-        val newText = if (clear && text.isEmpty()) "" else text
+        val newText = if (clear && text.isEmpty()) {
+            ""
+        } else if (!clear && !text.isEmpty()) {
+            val existing = target.text?.toString() ?: ""
+            existing + text
+        } else {
+            text
+        }
         val bundle = Bundle().apply {
             putCharSequence(
                 AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,

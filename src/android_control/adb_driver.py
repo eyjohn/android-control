@@ -221,7 +221,17 @@ class AdbDriver:
 
     def text(self, text: str, clear: bool = False, submit: bool = False) -> bool:
         if clear:
-            self._run_adb(["shell", "input", "keyevent", "--longpress", "67", "67", "67"])
+            # Select all and delete to reliably clear text across different input fields
+            self._run_adb(["shell", "input", "keyevent", "KEYCODE_MOVE_END"])
+            # Fallback multiple backspaces for fields that do not support key combos
+            self._run_adb(
+                [
+                    "shell",
+                    "input",
+                    "keyevent",
+                    *(["67"] * 50),
+                ]
+            )
         if text:
             # Escape shell special chars and whitespace for adb shell input text
             # %s represents space in adb input text

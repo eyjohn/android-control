@@ -58,6 +58,7 @@ class AdbWebRtcBridge:
             if not writer.is_closing():
                 data = message.encode("utf-8") if isinstance(message, str) else message
                 writer.write(data)
+                asyncio.create_task(writer.drain())
 
         @dc.on("close")
         def on_close():

@@ -91,6 +91,20 @@ def run_async(coro):
     return asyncio.run(coro)
 
 
+def _get_active_adb_driver(driver: Optional[str] = None) -> AdbDriver:
+    """Helper to return an AdbDriver configured with the active session ADB serial/port."""
+    if STATE_PATH.exists():
+        try:
+            state = json.loads(STATE_PATH.read_text())
+            adb_port = state.get("adb_port", 55555)
+            driver_candidate = AdbDriver(serial=f"127.0.0.1:{adb_port}")
+            if driver_candidate.is_connected():
+                return driver_candidate
+        except Exception:
+            pass
+    return AdbDriver()
+
+
 def get_backend(driver: Optional[str] = None):
     """Prioritizes the control method decided by the Android control app in response to request;
     falls back to standalone if no active session."""
@@ -626,21 +640,7 @@ def _run_adb_proxy(
                 "Press Ctrl+C to terminate proxy.[/dim]"
             )
 
-            # Heartbeat task: sends periodic ping to keep traffic timestamp fresh
-            async def _heartbeat():
-                while daemon._running:
-                    await asyncio.sleep(25.0)
-                    if daemon.host.is_ready:
-                        try:
-                            await daemon.host.send_rpc("ping", {}, timeout=5.0)
-                        except Exception:
-                            pass
-
-            hb_task = asyncio.create_task(_heartbeat())
-            try:
-                await daemon.wait_until_stopped()
-            finally:
-                hb_task.cancel()
+            await daemon.wait_until_stopped()
 
         run_async(_run())
     except KeyboardInterrupt:
@@ -800,7 +800,7 @@ def shell(
     command: str = typer.Argument(..., help="Shell command to run on device via ADB"),
 ):
     """Run arbitrary adb shell command on device (ADB mode only)."""
-    adb = AdbDriver()
+    adb = _get_active_adb_driver()
     if not adb.is_connected():
         rprint("[bold red]Error:[/] ADB device not connected. Shell commands require ADB mode.")
         sys.exit(1)
@@ -826,7 +826,7 @@ def layout(
 
     try:
         if backend == "adb":
-            res = AdbDriver().layout(flat=flat, full=full).model_dump()
+            res = _get_active_adb_driver().layout(flat=flat, full=full).model_dump()
         else:
             res = run_async(client_rpc("layout", {"flat": flat, "full": full}))
 
@@ -871,7 +871,7 @@ def do_screen_capture(
 
     try:
         if backend == "adb":
-            res = AdbDriver().screen(annotate=annotate, quality=quality).model_dump()
+            res = _get_active_adb_driver().screen(annotate=annotate, quality=quality).model_dump()
         else:
             res = run_async(client_rpc("screen", {"annotate": annotate, "quality": quality}))
 
@@ -881,6 +881,19 @@ def do_screen_capture(
 
         img_bytes = base64.b64decode(img_b64)
         output.parent.mkdir(parents=True, exist_ok=True)
+
+        img_format = res.get("format", "").lower()
+        if output.suffix.lower() == ".png" and img_format in ("webp", "webp_lossy"):
+            # Convert WEBP bytes to standard PNG to match file extension
+            import io
+
+            from PIL import Image
+
+            with Image.open(io.BytesIO(img_bytes)) as pil_img:
+                buf = io.BytesIO()
+                pil_img.save(buf, format="PNG")
+                img_bytes = buf.getvalue()
+
         output.write_bytes(img_bytes)
 
         # Save annotation map alongside image
@@ -994,7 +1007,7 @@ def input_tap(
 
     try:
         if backend == "adb":
-            success = AdbDriver().tap(x, y)
+            success = _get_active_adb_driver().tap(x, y)
             rprint(f"[bold green]✔ Tapped ({x}, {y}):[/] ok={success}")
         else:
             res = run_async(client_rpc("tap", {"x": x, "y": y}))
@@ -1020,7 +1033,7 @@ def input_swipe(
 
     try:
         if backend == "adb":
-            success = AdbDriver().swipe(x1, y1, x2, y2, duration_ms=duration_ms)
+            success = _get_active_adb_driver().swipe(x1, y1, x2, y2, duration_ms=duration_ms)
             rprint(f"[bold green]✔ Swiped ({x1},{y1}) -> ({x2},{y2}):[/] ok={success}")
         else:
             res = run_async(
@@ -1046,7 +1059,7 @@ def input_text(
 
     try:
         if backend == "adb":
-            success = AdbDriver().text(content)
+            success = _get_active_adb_driver().text(content)
             rprint(f"[bold green]✔ Entered text:[/] ok={success}")
         else:
             unescaped = content.replace("%s", " ")
@@ -1071,7 +1084,7 @@ def input_keyevent(
 
     try:
         if backend == "adb":
-            res = AdbDriver().shell(f"input keyevent {code}")
+            res = _get_active_adb_driver().shell(f"input keyevent {code}")
             rprint(f"[bold green]✔ Keyevent {code}:[/] {res.strip() or 'ok'}")
         else:
             code_upper = code.upper()
@@ -1129,7 +1142,7 @@ def tap(
 
     try:
         if backend == "adb":
-            adb = AdbDriver()
+            adb = _get_active_adb_driver()
             if node is not None:
                 map_path = Path("_scratch/screen.png.map.json")
                 if map_path.exists():
@@ -1179,7 +1192,7 @@ def long_press(
 
     try:
         if backend == "adb":
-            success = AdbDriver().tap(x, y, duration_ms=duration_ms)
+            success = _get_active_adb_driver().tap(x, y, duration_ms=duration_ms)
             rprint(f"[bold green]✔ Long-pressed ({x}, {y}):[/] ok={success}")
         else:
             res = run_async(client_rpc("tap", {"x": x, "y": y, "duration_ms": duration_ms}))
@@ -1205,7 +1218,7 @@ def swipe(
 
     try:
         if backend == "adb":
-            success = AdbDriver().swipe(x1, y1, x2, y2, duration_ms=duration_ms)
+            success = _get_active_adb_driver().swipe(x1, y1, x2, y2, duration_ms=duration_ms)
             rprint(f"[bold green]✔ Swiped ({x1},{y1}) -> ({x2},{y2}):[/] ok={success}")
         else:
             res = run_async(
@@ -1234,7 +1247,7 @@ def text(
 
     try:
         if backend == "adb":
-            adb = AdbDriver()
+            adb = _get_active_adb_driver()
             if node is not None:
                 # Tap node first to focus
                 map_path = Path("_scratch/screen.png.map.json")
@@ -1272,7 +1285,7 @@ def key(
 
     try:
         if backend == "adb":
-            success = AdbDriver().key(action)
+            success = _get_active_adb_driver().key(action)
             rprint(f"[bold green]✔ Key action {action}:[/] ok={success}")
         else:
             res = run_async(client_rpc("key", {"action": action}))
@@ -1294,7 +1307,7 @@ def launch(
 
     try:
         if backend == "adb":
-            success = AdbDriver().launch(target)
+            success = _get_active_adb_driver().launch(target)
             rprint(f"[bold green]✔ Launched {target}:[/] ok={success}")
         else:
             res = run_async(client_rpc("app.launch", {"package": target}))
@@ -1307,6 +1320,14 @@ def launch(
 @app.command()
 def packages():
     """List launchable applications on device."""
+    backend = get_backend()
+    if backend == "adb":
+        adb = _get_active_adb_driver()
+        raw = adb.shell("pm list packages -3")
+        pkgs = [p.removeprefix("package:").strip() for p in raw.splitlines() if p.strip()]
+        rprint(json.dumps({"packages": [{"package": p, "label": p} for p in pkgs]}, indent=2))
+        return
+
     try:
         res = run_async(client_rpc("app.list"))
         rprint(json.dumps(res, indent=2))

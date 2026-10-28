@@ -116,7 +116,6 @@ class ControlDaemon:
         # 5. Start ADB tunnel
         if self.device_info.get("mode") == "adb":
             try:
-                await self.host.wait_until_adb_ready(timeout=20.0)
                 await self.adb_bridge.start()
             except Exception:
                 pass

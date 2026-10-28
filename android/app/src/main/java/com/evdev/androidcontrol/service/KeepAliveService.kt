@@ -31,7 +31,9 @@ class KeepAliveService : Service() {
                     } else {
                         context.startService(intent)
                     }
-                } catch (_: Exception) {}
+                } catch (e: Exception) {
+                    android.util.Log.w("KeepAliveService", "startForegroundService suppressed: ${e.message}")
+                }
             }
         }
 
@@ -46,20 +48,19 @@ class KeepAliveService : Service() {
         createNotificationChannel()
         try {
             val notification = buildNotification()
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(
-                    NOTIF_ID,
-                    notification,
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-                    } else {
-                        0
-                    }
-                )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                var fgsType = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    fgsType = fgsType or ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                }
+                startForeground(NOTIF_ID, notification, fgsType)
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIF_ID, notification, 0)
             } else {
                 startForeground(NOTIF_ID, notification)
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            android.util.Log.e("KeepAliveService", "startForeground failed: ${e.message}")
             stopSelf()
         }
     }

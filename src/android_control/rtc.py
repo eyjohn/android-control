@@ -48,7 +48,6 @@ class WebRtcHost:
         self.on_adb_data = on_adb_data
         self._pending_responses: Dict[str, asyncio.Future[RpcResponse]] = {}
         self._channel_open_event = asyncio.Event()
-        self.adb_channel_open_event = asyncio.Event()
         self._connected = False
 
     async def create_offer(self) -> str:
@@ -134,18 +133,6 @@ class WebRtcHost:
                 f"(ICE state: {ice_state}, connection state: {conn_state})"
             )
 
-    async def wait_until_adb_ready(self, timeout: float = 30.0) -> None:
-        """Wait until ADB DataChannel is open and ready to transmit."""
-        try:
-            await asyncio.wait_for(self.adb_channel_open_event.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
-            ice_state = self.pc.iceConnectionState if self.pc else "unknown"
-            conn_state = self.pc.connectionState if self.pc else "unknown"
-            raise TimeoutError(
-                f"WebRTC ADB DataChannel handshake timed out after {timeout}s "
-                f"(ICE state: {ice_state}, connection state: {conn_state})"
-            )
-
     @property
     def is_ready(self) -> bool:
         if not self._connected or not self.pc or not self.channel:
@@ -220,7 +207,6 @@ class WebRtcHost:
         """Closes DataChannels and PeerConnection."""
         self._connected = False
         self._channel_open_event.clear()
-        self.adb_channel_open_event.clear()
 
         for fut in self._pending_responses.values():
             if not fut.done():
