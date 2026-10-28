@@ -106,14 +106,14 @@ def _get_active_adb_driver(driver: Optional[str] = None) -> AdbDriver:
 
 
 def get_backend(driver: Optional[str] = None):
-    """Prioritizes the control method decided by the Android control app in response to request;
-    falls back to standalone if no active session."""
+    """Prioritizes the control method decided by the Android control app in response to request.
+    Strictly requires an active WebRTC session (daemon or adb bridge)."""
     if driver == "a11y":
         return "daemon"
     if driver == "adb":
         return "adb"
 
-    # Active session: check mode chosen by Android control app!
+    # Active session: check mode chosen by Android control app
     if SOCKET_PATH.exists():
         if STATE_PATH.exists():
             try:
@@ -129,14 +129,9 @@ def get_backend(driver: Optional[str] = None):
                 pass
         return "daemon"
 
-    # Alternative: Active WebRTC ADB bridge tunnel
+    # Active WebRTC ADB bridge tunnel
     adb_webrtc = AdbDriver(serial="127.0.0.1:55555")
     if adb_webrtc.is_connected():
-        return "adb"
-
-    # Direct fallback if neither WebRTC channel is active
-    adb = AdbDriver()
-    if adb.is_connected():
         return "adb"
 
     return "none"
@@ -762,35 +757,9 @@ def status():
         )
         return
 
-    # 3. Direct ADB (USB / Local Wi-Fi) fallback
-    adb = AdbDriver()
-    if adb.is_connected():
-        pkg = adb.get_foreground_package()
-        serial = adb.get_active_serial() or "unknown"
-        mode = "wifi" if ":" in serial else "usb"
-        rprint(
-            json.dumps(
-                {
-                    "driver": "adb_direct",
-                    "transport": mode,
-                    "target": serial,
-                    "connected": True,
-                    "foreground_package": pkg,
-                    "capabilities": [
-                        "full_shell",
-                        "screencap",
-                        "uiautomator",
-                        "input_events",
-                        "pm_am",
-                    ],
-                },
-                indent=2,
-            )
-        )
-        return
-
     rprint(
-        "[bold red]Offline:[/] No connected ADB device and no active Accessibility WebRTC session."
+        "[bold red]Offline:[/] No active WebRTC session or WebRTC ADB proxy found. "
+        "Run 'android-ctl request' or 'android-ctl adb proxy'."
     )
     sys.exit(1)
 
