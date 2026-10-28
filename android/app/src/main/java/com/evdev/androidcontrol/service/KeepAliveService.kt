@@ -92,10 +92,20 @@ class KeepAliveService : Service() {
                 "Listening for remote requests"
             }
 
+            val iconRes = if (isConnected) {
+                R.drawable.ic_stat_remote_connected
+            } else {
+                R.drawable.ic_stat_remote_standby
+            }
+            val accentColor = if (isConnected) 0xFF22C55E.toInt() else 0xFF64748B.toInt()
+
             val builder = NotificationCompat.Builder(context, CHANNEL_ID)
                 .setContentTitle(title)
                 .setContentText(text)
-                .setSmallIcon(R.drawable.ic_stat_remote_control)
+                .setSubText(if (isConnected) "Active" else "Standby")
+                .setSmallIcon(iconRes)
+                .setColor(accentColor)
+                .setColorized(isConnected)
                 .setContentIntent(openPendingIntent)
                 .setOngoing(true)
                 .setSilent(true)
