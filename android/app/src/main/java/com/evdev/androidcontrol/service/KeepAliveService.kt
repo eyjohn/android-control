@@ -18,7 +18,8 @@ import com.evdev.androidcontrol.session.SessionManager
 class KeepAliveService : Service() {
 
     companion object {
-        const val CHANNEL_ID = "android_control_service_channel"
+        const val OLD_CHANNEL_ID = "android_control_service_channel"
+        const val CHANNEL_ID = "android_control_service_channel_v2"
         const val NOTIF_ID = 2001
 
         const val ACTION_DISCONNECT = "com.evdev.androidcontrol.action.DISCONNECT"
@@ -97,7 +98,8 @@ class KeepAliveService : Service() {
                 .setSmallIcon(R.drawable.ic_stat_remote_control)
                 .setContentIntent(openPendingIntent)
                 .setOngoing(true)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setSilent(true)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 .setShowWhen(false)
 
             if (isConnected) {
@@ -159,14 +161,19 @@ class KeepAliveService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager = getSystemService(NotificationManager::class.java)
+            manager?.deleteNotificationChannel(OLD_CHANNEL_ID)
+
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Remote Control Service",
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_DEFAULT
             ).apply {
                 description = "Status bar and controls for active WebRTC remote sessions"
+                setShowBadge(false)
+                setSound(null, null)
+                enableVibration(false)
             }
-            val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(channel)
         }
     }

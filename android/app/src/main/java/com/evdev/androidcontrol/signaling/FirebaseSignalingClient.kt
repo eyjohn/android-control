@@ -434,8 +434,8 @@ class FirebaseSignalingClient(private val context: Context) {
                 explicitToken = explicitToken
             )
 
-            // Fallback to legacy path if not found in user inbox or user inbox access denied
-            if ((!resp.isSuccess || resp.body.isNullOrBlank() || resp.body == "null") && !uid.isNullOrBlank()) {
+            // If user inbox access is denied (e.g. 401/403) or empty, fall back to global inbox path
+            if ((!resp.isSuccess || resp.statusCode in listOf(401, 403) || resp.body.isNullOrBlank() || resp.body == "null") && !uid.isNullOrBlank()) {
                 val fallbackResp = httpRequest(
                     method = "GET",
                     path = "/android_control/devices/$deviceId/inbox.json",
@@ -476,6 +476,13 @@ class FirebaseSignalingClient(private val context: Context) {
             runCatching {
                 val uid = currentUid
                 var ok = false
+                val resGlobal = httpRequest(
+                    method = "PUT",
+                    path = "/android_control/sessions/${answer.sessionId}/answer.json",
+                    body = answer.toJson(),
+                    explicitToken = explicitToken
+                )
+                ok = resGlobal.isSuccess
                 if (!uid.isNullOrBlank()) {
                     val resUser = httpRequest(
                         method = "PUT",
@@ -483,15 +490,7 @@ class FirebaseSignalingClient(private val context: Context) {
                         body = answer.toJson(),
                         explicitToken = explicitToken
                     )
-                    ok = resUser.isSuccess
-                } else {
-                    val resGlobal = httpRequest(
-                        method = "PUT",
-                        path = "/android_control/sessions/${answer.sessionId}/answer.json",
-                        body = answer.toJson(),
-                        explicitToken = explicitToken
-                    )
-                    ok = resGlobal.isSuccess
+                    ok = ok || resUser.isSuccess
                 }
                 ok
             }.getOrDefault(false)
