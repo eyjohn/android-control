@@ -4,6 +4,7 @@ import android.accounts.AccountManager
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -22,6 +23,14 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var sessionManager: SessionManager
     private var pendingConsentEmail: String? = null
+
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            com.evdev.androidcontrol.service.KeepAliveService.startIfNeeded(applicationContext)
+        }
+    }
 
     private val accountPickerLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -81,6 +90,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         sessionManager = SessionManager.getInstance(applicationContext)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
         com.evdev.androidcontrol.service.KeepAliveService.startIfNeeded(applicationContext)
 
         handleIntent(intent)

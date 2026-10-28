@@ -230,6 +230,7 @@ class WebRtcHost:
         if self.pc:
             try:
                 await self.pc.close()
+                await asyncio.sleep(0.05)
             except Exception:
                 pass
             self.pc = None

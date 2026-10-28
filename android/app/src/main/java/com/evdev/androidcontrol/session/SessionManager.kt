@@ -466,20 +466,6 @@ class SessionManager private constructor(private val context: Context) {
 
                     // 1. Publish Answer to Firebase RTDB
                     firebaseSignaling.publishAnswer(answer)
-
-                    // 2. Also write local answer files for direct ADB fallback
-                    try {
-                        File(context.getExternalFilesDir(null), "answer.webrtc").writeText(b64)
-                    } catch (_: Exception) {}
-                    try {
-                        File(context.filesDir, "answer.webrtc").writeText(b64)
-                    } catch (_: Exception) {}
-
-                    val bIntent = Intent("com.evdev.androidcontrol.ANSWER").apply {
-                        putExtra("answer", b64)
-                        putExtra("session_id", offer.sessionId)
-                    }
-                    context.sendBroadcast(bIntent)
                 } catch (e: CancellationException) {
                     // Replaced by newer offer
                     throw e

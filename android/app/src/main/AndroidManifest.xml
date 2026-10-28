@@ -45,16 +45,6 @@
             </intent-filter>
         </activity>
 
-        <!-- S5: Protected local ADB signaling receiver accessible only via shell/root (DUMP permission) -->
-        <receiver
-            android:name=".signaling.LocalSignalingReceiver"
-            android:exported="true"
-            android:permission="android.permission.DUMP">
-            <intent-filter>
-                <action android:name="com.evdev.androidcontrol.LOCAL_OFFER" />
-            </intent-filter>
-        </receiver>
-
         <!-- R5: Foreground service to keep process alive in ADB mode when A11y is inactive -->
         <service
             android:name=".service.KeepAliveService"

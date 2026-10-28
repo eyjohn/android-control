@@ -23,7 +23,6 @@ from android_control.signaling.base import (
     SignalingProvider,
     get_current_google_account,
 )
-from android_control.signaling.local import LocalFileSignaling
 
 
 def get_firebase_auth_token() -> tuple[Optional[str], Optional[str], Optional[str]]:
@@ -99,7 +98,6 @@ class FirebaseSignaling(SignalingProvider):
         self.database_url = (database_url or get_firebase_db_url()).rstrip("/")
         self.target_fcm_token = target_fcm_token or os.getenv("ANDROID_FCM_TOKEN")
         self.credentials_path = credentials_path
-        self._local_fallback = LocalFileSignaling()
 
     @property
     def is_configured(self) -> bool:
@@ -252,7 +250,6 @@ class FirebaseSignaling(SignalingProvider):
         await asyncio.gather(*rtdb_tasks, return_exceptions=True)
 
         # 2. Deliver to target device inbox (publish to active /android_control & /users paths)
-        delivered_to_rtdb = False
         dev_id = target_dev.get("device_id") if target_dev else target_device_id
         if dev_id:
             inbox_tasks = [
@@ -272,17 +269,7 @@ class FirebaseSignaling(SignalingProvider):
                         payload_dict,
                     )
                 )
-            results = await asyncio.gather(*inbox_tasks, return_exceptions=True)
-            delivered_to_rtdb = any(
-                res is not None and not isinstance(res, Exception) for res in results
-            )
-
-        # 3. Only fire local ADB fallback if RTDB delivery was unavailable
-        if not delivered_to_rtdb:
-            try:
-                await self._local_fallback.publish_offer(offer, dev_id)
-            except Exception:
-                pass
+            await asyncio.gather(*inbox_tasks, return_exceptions=True)
 
         return target_dev
 
@@ -317,14 +304,6 @@ class FirebaseSignaling(SignalingProvider):
             except Exception:
                 pass
 
-            # Check local answer file fallback
-            try:
-                dev_ans = await asyncio.to_thread(self._local_fallback._fetch_device_answer)
-                if dev_ans:
-                    return SessionAnswer.from_payload(dev_ans)
-            except Exception:
-                pass
-
             await asyncio.sleep(0.5)
         return None
 
@@ -348,11 +327,6 @@ class FirebaseSignaling(SignalingProvider):
                 )
             except Exception:
                 pass
-
-        try:
-            await self._local_fallback.close_session(session_id)
-        except Exception:
-            pass
 
     async def publish_renegotiation_offer(self, session_id: str, offer_sdp: str) -> None:
         offer = SessionOffer(

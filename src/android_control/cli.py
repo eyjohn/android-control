@@ -88,7 +88,19 @@ def format_relative_time(ts_ms: int) -> str:
 
 
 def run_async(coro):
-    return asyncio.run(coro)
+    async def _runner():
+        try:
+            return await coro
+        finally:
+            # Drain and allow pending background async tasks (like aiortc / turn cleanups) to finish
+            tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+            if tasks:
+                for t in tasks:
+                    if not t.done():
+                        t.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+    return asyncio.run(_runner())
 
 
 def _get_active_adb_driver(driver: Optional[str] = None) -> AdbDriver:
@@ -135,32 +147,6 @@ def get_backend(driver: Optional[str] = None):
         return "adb"
 
     return "none"
-
-
-@app.command()
-def wifi(
-    port: int = typer.Option(5555, "--port", "-p", help="TCP port for ADB over Wi-Fi"),
-):
-    """Enable ADB over Wi-Fi on connected USB device, discover IP, and connect."""
-    adb = AdbDriver()
-    if not adb.is_connected():
-        rprint("[bold red]Error:[/] No authorized device found. Unlock phone and tap Allow first.")
-        sys.exit(1)
-
-    ip = adb.get_wlan_ip()
-    if not ip:
-        rprint("[bold red]Error:[/] Could not detect phone Wi-Fi IP. Ensure phone is on Wi-Fi.")
-        sys.exit(1)
-
-    rprint(f"[bold cyan]==>[/] Phone Wi-Fi IP: [green]{ip}[/]")
-    rprint(f"[bold cyan]==>[/] Switching adbd to TCP/IP port {port}...")
-    adb.enable_tcpip(port)
-
-    rprint(f"[bold cyan]==>[/] Connecting to {ip}:{port}...")
-    if adb.connect(ip, port):
-        rprint(f"[bold green]✔ Connected over Wi-Fi to {ip}:{port}![/] USB can now be unplugged.")
-    else:
-        rprint(f"[bold yellow]Connect failed. Try:[/] adb connect {ip}:{port}")
 
 
 @app.command()
