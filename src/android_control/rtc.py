@@ -25,6 +25,7 @@ class WebRtcHost:
         ice_servers: Optional[list[Dict[str, Any]]] = None,
         on_state_change: Optional[Callable[[str], None]] = None,
         on_adb_data: Optional[Callable[[bytes], None]] = None,
+        on_channel_close: Optional[Callable[[], None]] = None,
     ):
         servers = stun_servers or ["stun:stun.l.google.com:19302"]
         rtc_ice_servers = [RTCIceServer(urls=servers)]
@@ -46,6 +47,7 @@ class WebRtcHost:
         self.adb_channel: Optional[Any] = None
         self.on_state_change = on_state_change
         self.on_adb_data = on_adb_data
+        self.on_channel_close = on_channel_close
         self._pending_responses: Dict[str, asyncio.Future[RpcResponse]] = {}
         self._channel_open_event = asyncio.Event()
         self._connected = False
@@ -81,6 +83,8 @@ class WebRtcHost:
         def on_close():
             self._channel_open_event.clear()
             self._connected = False
+            if self.on_channel_close:
+                self.on_channel_close()
 
         offer = await self.pc.createOffer()
         await self.pc.setLocalDescription(offer)

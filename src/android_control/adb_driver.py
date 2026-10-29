@@ -10,7 +10,7 @@ import subprocess
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Optional
 
-from PIL import Image, ImageDraw
+from PIL import Image
 
 from android_control.protocol import (
     LayoutPayload,
@@ -169,36 +169,22 @@ class AdbDriver:
 
         if annotate:
             layout_data = self.layout(flat=True, full=False)
-            draw = ImageDraw.Draw(img)
-
             for elem in layout_data.elements:
                 b = elem.bounds
                 if len(b) == 4:
-                    x1, y1, x2, y2 = b[0], b[1], b[2], b[3]
-                    draw.rectangle((x1, y1, x2, y2), outline=(255, 0, 0), width=3)
-
-                    label = f"#{elem.index}"
-                    badge_w = len(label) * 16 + 12
-                    badge_h = 28
-                    top_badge = max(0, y1 - badge_h)
-                    draw.rectangle((x1, top_badge, x1 + badge_w, max(badge_h, y1)), fill=(0, 0, 0))
-                    draw.text((x1 + 6, top_badge + 4), label, fill=(255, 255, 255))
-
                     annotations[str(elem.index)] = {
                         "center": elem.center,
                         "bounds": elem.bounds,
                     }
 
-            buf = io.BytesIO()
-            img.save(buf, format="WEBP", quality=quality)
-            final_bytes = buf.getvalue()
-        else:
-            final_bytes = png_bytes
+        buf = io.BytesIO()
+        img.save(buf, format="WEBP", quality=quality)
+        final_bytes = buf.getvalue()
 
         b64 = base64.b64encode(final_bytes).decode("ascii")
         return ScreenPayload(
             image_base64=b64,
-            format="webp" if annotate else "png",
+            format="webp",
             width=width,
             height=height,
             annotations=annotations,

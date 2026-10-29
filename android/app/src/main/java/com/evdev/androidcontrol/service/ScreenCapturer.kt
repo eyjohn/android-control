@@ -2,10 +2,6 @@ package com.evdev.androidcontrol.service
 
 import android.accessibilityservice.AccessibilityService
 import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.Rect
 import android.os.Build
 import android.util.Base64
 import android.view.Display
@@ -61,45 +57,9 @@ object ScreenCapturer {
         if (annotate) {
             val root = service.rootInActiveWindow
             val layout = LayoutExtractor.extract(root, width, height, flat = true, full = false)
-
-            val canvas = Canvas(bitmap)
-            val boxPaint = Paint().apply {
-                color = Color.RED
-                style = Paint.Style.STROKE
-                strokeWidth = 4f
-            }
-            val textPaint = Paint().apply {
-                color = Color.WHITE
-                textSize = 32f
-                style = Paint.Style.FILL
-                isFakeBoldText = true
-            }
-            val badgeBgPaint = Paint().apply {
-                color = Color.BLACK
-                style = Paint.Style.FILL
-            }
-
-            val textBounds = Rect()
-            textPaint.getTextBounds("#99", 0, 3, textBounds)
-            val badgeH = textBounds.height() + 14
             for (elem in layout.elements) {
                 val b = elem.bounds
                 if (b.size == 4) {
-                    val rect = Rect(b[0], b[1], b[2], b[3])
-                    canvas.drawRect(rect, boxPaint)
-
-                    val label = "#${elem.index}"
-                    textPaint.getTextBounds(label, 0, label.length, textBounds)
-                    val badgeW = textBounds.width() + 16
-
-                    val topBadge = (b[1] - badgeH).coerceAtLeast(0)
-                    val bottomBadge = (topBadge + badgeH).coerceAtMost(height)
-                    val rightBadge = (b[0] + badgeW).coerceAtMost(width)
-
-                    val badgeRect = Rect(b[0], topBadge, rightBadge, bottomBadge)
-                    canvas.drawRect(badgeRect, badgeBgPaint)
-                    canvas.drawText(label, (b[0] + 8).toFloat(), (bottomBadge - 6).toFloat(), textPaint)
-
                     annotations[elem.index.toString()] = AnnotationNode(
                         center = elem.center,
                         bounds = elem.bounds

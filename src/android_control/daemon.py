@@ -50,7 +50,11 @@ class ControlDaemon:
             else get_default_ice_servers(turn_server, turn_user, turn_pass)
         )
 
-        self.host = WebRtcHost(ice_servers=self.ice_servers)
+        self.host = WebRtcHost(
+            ice_servers=self.ice_servers,
+            on_state_change=self._on_host_state_change,
+            on_channel_close=self._on_channel_close,
+        )
         self.adb_bridge = AdbWebRtcBridge(
             self.host, local_port=self.adb_port, on_activity=self._touch_activity
         )
@@ -61,6 +65,14 @@ class ControlDaemon:
         self._running = False
         self._stop_event: asyncio.Event = asyncio.Event()
         self._connect_lock = asyncio.Lock()
+
+    def _on_host_state_change(self, state: str) -> None:
+        if state in ("failed", "closed") and self._running:
+            asyncio.create_task(self.stop())
+
+    def _on_channel_close(self) -> None:
+        if self._running:
+            asyncio.create_task(self.stop())
 
     def _touch_activity(self) -> None:
         self.last_activity_time = time.time()
@@ -185,7 +197,9 @@ class ControlDaemon:
 
                 if failed_count >= 2:
                     failed_count = 0
-                    await self._teardown_rtc()
+                    if self._running:
+                        await self.stop()
+                        break
 
     async def _teardown_rtc(self) -> None:
         """Cleanly tears down WebRTC connection while preserving session IPC."""
@@ -199,7 +213,11 @@ class ControlDaemon:
         except Exception:
             pass
         await self.host.close()
-        self.host = WebRtcHost(ice_servers=self.ice_servers)
+        self.host = WebRtcHost(
+            ice_servers=self.ice_servers,
+            on_state_change=self._on_host_state_change,
+            on_channel_close=self._on_channel_close,
+        )
         self.adb_bridge = AdbWebRtcBridge(
             self.host, local_port=self.adb_port, on_activity=self._touch_activity
         )

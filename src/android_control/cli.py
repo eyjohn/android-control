@@ -494,7 +494,9 @@ def request(
     device: Optional[str] = typer.Option(
         None, "--device", "-d", help="Target device ID or prefix (defaults to selected/latest)"
     ),
-    wait: int = typer.Option(300, "--wait", "-w", help="Seconds to wait for user approval"),
+    wait: int = typer.Option(
+        30, "--wait", "-w", help="Seconds to wait for device approval (default: 30s)"
+    ),
     turn_server: Optional[str] = typer.Option(
         None, "--turn-server", help="TURN server URL (e.g. turn:relay.example.com:3478)"
     ),
@@ -548,6 +550,7 @@ def request(
                 "Press Ctrl+C to terminate.[/dim]"
             )
             await daemon.wait_until_stopped()
+            rprint("\n[yellow]Remote session ended (device disconnected or app closed).[/yellow]")
 
         run_async(_run_session())
     except KeyboardInterrupt:
@@ -624,6 +627,7 @@ def _run_adb_proxy(
             )
 
             await daemon.wait_until_stopped()
+            rprint("\n[yellow]Remote session ended (device disconnected or app closed).[/yellow]")
 
         run_async(_run())
     except KeyboardInterrupt:
@@ -903,7 +907,7 @@ def screen_main(
         None, "-o", "--output", help="Path to save screenshot PNG (defaults to temporary scratch)"
     ),
     annotate: bool = typer.Option(
-        True, "--annotate/--no-annotate", help="Draw #N numbered bounding boxes"
+        True, "--annotate/--no-annotate", help="Extract UI element bounding boxes as JSON map"
     ),
     quality: int = typer.Option(80, "--quality", help="Image quality compression"),
 ):
@@ -918,7 +922,7 @@ def screen_capture(
         None, "-o", "--output", help="Path to save screenshot PNG (defaults to temporary scratch)"
     ),
     annotate: bool = typer.Option(
-        True, "--annotate/--no-annotate", help="Draw #N numbered bounding boxes"
+        True, "--annotate/--no-annotate", help="Extract UI element bounding boxes as JSON map"
     ),
     quality: int = typer.Option(80, "--quality", help="Image quality compression"),
 ):
