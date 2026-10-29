@@ -19,17 +19,10 @@
         android:fillColor="#FFFFFFFF"
         android:pathData="M 12,19.85 A 0.65,0.65 0 1,0 12,21.15 A 0.65,0.65 0 1,0 12,19.85 Z" />
 
-    <!-- Standby: Wireless wave at top of screen -->
+    <!-- Standby: Centered 'X' inside screen with padding -->
     <path
         android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="1.4"
+        android:strokeWidth="1.8"
         android:strokeLineCap="round"
-        android:pathData="M 9.5,8.5 A 3.2,3.2 0 0,1 14.5,8.5" />
-
-    <!-- Standby: 'X' indicator inside screen -->
-    <path
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="1.6"
-        android:strokeLineCap="round"
-        android:pathData="M 9.8,11.5 L 14.2,15.8 M 14.2,11.5 L 9.8,15.8" />
+        android:pathData="M 9.5,9.5 L 14.5,14.5 M 14.5,9.5 L 9.5,14.5" />
 </vector>

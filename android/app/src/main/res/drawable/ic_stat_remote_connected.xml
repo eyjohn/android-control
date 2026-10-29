@@ -19,26 +19,22 @@
         android:fillColor="#FFFFFFFF"
         android:pathData="M 12,19.85 A 0.65,0.65 0 1,0 12,21.15 A 0.65,0.65 0 1,0 12,19.85 Z" />
 
-    <!-- Connected: Upward wireless symbol inside screen -->
+    <!-- Connected: Base node -->
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M 12,15.1 A 1.1,1.1 0 1,0 12,17.3 A 1.1,1.1 0 1,0 12,15.1 Z" />
+        android:pathData="M 12,14.5 A 1.0,1.0 0 1,0 12,16.5 A 1.0,1.0 0 1,0 12,14.5 Z" />
 
+    <!-- Lower arc (squeezed to avoid edges) -->
     <path
         android:strokeColor="#FFFFFFFF"
         android:strokeWidth="1.5"
         android:strokeLineCap="round"
-        android:pathData="M 9.5,13.6 A 3.2,3.2 0 0,1 14.5,13.6" />
+        android:pathData="M 10,13.2 A 2.6,2.6 0 0,1 14,13.2" />
 
+    <!-- Upper arc (squeezed to span x:8.5 to 15.5, nicely padded from edges x:7..17) -->
     <path
         android:strokeColor="#FFFFFFFF"
         android:strokeWidth="1.5"
         android:strokeLineCap="round"
-        android:pathData="M 7.8,11 A 5.6,5.6 0 0,1 16.2,11" />
-
-    <path
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="1.5"
-        android:strokeLineCap="round"
-        android:pathData="M 6.5,8.5 A 7.8,7.8 0 0,1 17.5,8.5" />
+        android:pathData="M 8.5,10.6 A 4.8,4.8 0 0,1 15.5,10.6" />
 </vector>
